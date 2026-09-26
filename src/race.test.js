@@ -1,0 +1,44 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { newRace, tick, place } from "./race.js";
+const drive = { accelerate: true };
+test("three laps finish once and freeze the race", () => {
+  const r = newRace(100);
+  r.rivals = [];
+  for (let i = 0; i < 2000; i++) tick(r, drive, 0.016);
+  assert.equal(r.finished, true);
+  assert.equal(r.player.distance, 300);
+  const t = r.time;
+  tick(r, drive, 0.016);
+  assert.equal(r.time, t);
+});
+test("road bounds hold and braking stops without reversing", () => {
+  const r = newRace(10000);
+  r.rivals = [];
+  for (let i = 0; i < 500; i++) tick(r, { ...drive, right: true }, 0.016);
+  assert.ok(r.player.lane <= 6.6);
+  for (let i = 0; i < 300; i++) tick(r, { brake: true }, 0.016);
+  assert.equal(r.player.speed, 0);
+});
+test("drift recharges and boost consumes its bounded reserve", () => {
+  const r = newRace(10000);
+  r.rivals = [];
+  r.player.boost = 0.3;
+  r.player.speed = 25;
+  for (let i = 0; i < 50; i++)
+    tick(r, { ...drive, drift: true, right: true }, 0.016);
+  assert.ok(r.player.boost > 0.3);
+  const b = r.player.boost;
+  for (let i = 0; i < 50; i++) tick(r, { ...drive, boost: true }, 0.016);
+  assert.ok(r.player.boost < b);
+  assert.ok(r.player.speed > 31);
+});
+test("lapping a rival never teleports the player", () => {
+  const r = newRace(100);
+  r.player.distance = 201;
+  r.player.speed = 31;
+  r.rivals = [{ distance: 102, lane: 0, speed: 20, pace: 20 }];
+  tick(r, drive, 0.016);
+  assert.ok(r.player.distance > 198 && r.player.distance < 202);
+  assert.equal(place(r), 1);
+});

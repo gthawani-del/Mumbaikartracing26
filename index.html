@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#122e38" />
+    <title>Mumbai Kart Racing 26</title>
+  </head>
+  <body>
+    <div id="game"></div>
+    <header>
+      <a class="brand" href="/">MUMBAI<span>KART RACING / 26</span></a>
+      <div class="top-actions">
+        <button id="sound" aria-label="Toggle sound">Sound off</button
+        ><button id="pause" disabled>Pause</button>
+      </div>
+    </header>
+    <section id="hud" hidden>
+      <div><small>POSITION</small><b id="position">6 / 6</b></div>
+      <div><small>LAP</small><b id="lap">1 / 3</b></div>
+      <div><small>RACE TIME</small><b id="time">0:00.0</b></div>
+    </section>
+    <main id="menu">
+      <p class="eyebrow">MARINE DRIVE CIRCUIT</p>
+      <h1>The city.<br />The sea.<br /><em>The chase.</em></h1>
+      <p class="intro">
+        Six autos. Three laps. One Queen’s Necklace.<br />Take the inside line
+        and make Mumbai yours.
+      </p>
+      <div class="tags">
+        <span>3 laps</span><span>5 rivals</span><span>Arcade racing</span>
+      </div>
+      <button id="start" class="primary" disabled>Loading circuit…</button>
+      <p id="loading" role="status">Preparing Marine Drive</p>
+      <details>
+        <summary>How to race</summary>
+        <p>
+          W / ↑ accelerate · S / ↓ brake<br />A D / ← → steer · Space drift<br />Shift
+          boost · Esc pause
+        </p>
+        <p>
+          Steering follows the circuit. Drift while steering to charge boost. On
+          touchscreens, acceleration is automatic.
+        </p>
+      </details>
+    </main>
+    <div id="countdown" role="status"></div>
+    <section id="dashboard" hidden>
+      <div class="speed"><b id="speed">0</b><small>KM/H</small></div>
+      <div class="boost">
+        <span id="boost-label">BOOST</span>
+        <div><i id="boost-fill"></i></div>
+        <small>DRIFT TO RECHARGE</small>
+      </div>
+      <canvas
+        id="minimap"
+        width="180"
+        height="180"
+        aria-label="Race positions on the circuit"
+      ></canvas>
+    </section>
+    <div id="touch" hidden>
+      <div>
+        <button data-control="left" aria-label="Steer left">◀</button
+        ><button data-control="right" aria-label="Steer right">▶</button>
+      </div>
+      <div>
+        <button data-control="brake">BRAKE</button
+        ><button data-control="drift">DRIFT</button
+        ><button data-control="boost">BOOST</button>
+      </div>
+    </div>
+    <section id="overlay" hidden>
+      <p class="eyebrow" id="overlay-label">RACE PAUSED</p>
+      <h2 id="result">Take a breather.</h2>
+      <p id="result-detail"></p>
+      <button id="resume" class="primary">Resume race</button
+      ><button id="restart">Race again</button
+      ><button id="home">Back to menu</button>
+    </section>
+    <footer id="footer">
+      MUMBAI, INDIA <span>THE QUEEN’S NECKLACE RUN</span>
+    </footer>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
