@@ -7,9 +7,9 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
   if (!Number.isFinite(length) || length <= 0) throw new Error('Race length must be positive.');
   const pace = DIFFICULTY_PACE[difficulty] ?? DIFFICULTY_PACE.Medium;
   const grid = [
-    { distance: 8, lane: -2.2 }, { distance: 8, lane: 2.2 },
-    { distance: 19, lane: -2.2 }, { distance: 19, lane: 2.2 },
-    { distance: 31, lane: -2.2 }, { distance: 31, lane: 2.2 },
+    { distance: 8, lane: -4.2 }, { distance: 8, lane: 4.2 },
+    { distance: 19, lane: -4.2 }, { distance: 19, lane: 4.2 },
+    { distance: 31, lane: -4.2 }, { distance: 31, lane: 4.2 },
     { distance: 43, lane: 0 },
   ];
   return {
@@ -22,8 +22,8 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
     player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, charge: 0.65, boostTime: 0, impacts: 0 },
     rivals: Array.from({ length: rivals }, (_, index) => ({
       distance: grid[index]?.distance ?? 48 + (index - grid.length + 1) * 9,
-      lane: grid[index]?.lane ?? (index % 2 ? 2.2 : -2.2),
-      baseLane: grid[index]?.lane ?? (index % 2 ? 2.2 : -2.2),
+      lane: grid[index]?.lane ?? (index % 2 ? 4.2 : -4.2),
+      baseLane: grid[index]?.lane ?? (index % 2 ? 4.2 : -4.2),
       speed: 0,
       pace: pace + (index - (rivals - 1) / 2) * 0.55,
       finished: false,

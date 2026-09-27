@@ -13,8 +13,27 @@ let disposed = false, paused = false;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
 const materials = {
-  asphalt: mat('#272b31'), marking: mat('#e2d7b6'), rail: mat('#c6cdd0', 0.38, 0.7), dark: mat('#14171b'), tire: mat('#101114'), hub: mat('#c4c8ca', 0.3, 0.85), seat: mat('#26212a'), skin: mat('#bb805f'), shirt: mat('#273b4c'), gold: mat('#e2ac51', 0.28, 0.55), glass: new THREE.MeshStandardMaterial({ color: '#bbd5dc', roughness: 0.3, metalness: 0.4, transparent: true, opacity: 0.6 })
+  asphalt: mat('#ffffff', 0.56, 0.07), marking: mat('#e2d7b6'), rail: mat('#c6cdd0', 0.38, 0.7), dark: mat('#14171b'), tire: mat('#101114'), hub: mat('#c4c8ca', 0.3, 0.85), seat: mat('#26212a'), skin: mat('#bb805f'), shirt: mat('#273b4c'), gold: mat('#e2ac51', 0.28, 0.55), glass: new THREE.MeshStandardMaterial({ color: '#bbd5dc', roughness: 0.3, metalness: 0.4, transparent: true, opacity: 0.6 })
 };
+
+function asphaltTexture() {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
+  const context = canvas.getContext('2d'); const pixels = context.createImageData(128, 128);
+  let seed = 2026;
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const grain = ((seed >>> 24) - 128) * 0.11;
+    const worn = Math.sin(Math.floor(i / 4 / 128) * 0.12) * 2.5;
+    pixels.data[i] = 52 + grain + worn;
+    pixels.data[i + 1] = 55 + grain + worn;
+    pixels.data[i + 2] = 59 + grain + worn;
+    pixels.data[i + 3] = 255;
+  }
+  context.putImageData(pixels, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
+  return texture;
+}
 
 function roadFrame(distance) {
   const u = clamp(distance / routeLength, 0, 1);
@@ -64,19 +83,23 @@ function modelKart(template, color) {
   return object;
 }
 
-function addWorld(data) {
+function addWorld(data, pylonTemplate) {
   const [lon0, lat0] = data.route[0]; const cos = Math.cos(lat0 * Math.PI / 180);
   const pts = data.route.map(([lon, lat]) => new THREE.Vector3((lon - lon0) * 111320 * cos * SCALE, 0, (lat0 - lat) * 111320 * SCALE));
   curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.25);
   const samples = curve.getSpacedPoints(600);
   routeLength = curve.getLength();
-  const vertices = [], indices = [];
+  const vertices = [], uvs = [], indices = [];
   for (let i = 0; i < samples.length; i++) {
     const p = samples[i], t = curve.getTangentAt(i / (samples.length - 1)); const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
-    for (const side of [-1, 1]) vertices.push(p.x + right.x * ROAD_HALF * side, 0.16, p.z + right.z * ROAD_HALF * side);
+    for (const side of [-1, 1]) {
+      vertices.push(p.x + right.x * ROAD_HALF * side, 0.16, p.z + right.z * ROAD_HALF * side);
+      uvs.push((side + 1) / 2, i / (samples.length - 1) * routeLength / 4);
+    }
     if (i < samples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
   }
-  const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
+  const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
+  materials.asphalt.map?.dispose(); materials.asphalt.map = asphaltTexture(); materials.asphalt.needsUpdate = true;
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ color: '#304d59', roughness: 0.44, metalness: 0.28 })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
@@ -98,11 +121,14 @@ function addWorld(data) {
   }
   railPosts.count = postIndex; railRuns.count = runIndex; scene.add(railPosts, railRuns);
   // Dashed center line, edge reflectors and bridge lighting.
-  const centerMarks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.09, 0.035, 1.12), materials.marking, 300);
+  const centerMarks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.07, 0.035, 1.12), materials.marking, 600);
   const markerTransform = new THREE.Object3D(); let markerCount = 0;
   for (let i = 0; i < 600; i += 2) {
     const p = samples[i], t = curve.getTangentAt(i / 600), right = new THREE.Vector3(t.z, 0, -t.x).normalize();
-    markerTransform.position.set(p.x, 0.19, p.z); markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.updateMatrix(); centerMarks.setMatrixAt(markerCount++, markerTransform.matrix);
+    for (const side of [-1, 1]) {
+      markerTransform.position.set(p.x + right.x * side * ROAD_HALF / 3, 0.19, p.z + right.z * side * ROAD_HALF / 3);
+      markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.updateMatrix(); centerMarks.setMatrixAt(markerCount++, markerTransform.matrix);
+    }
     if (i % 8 === 0) for (const side of [-1, 1]) {
       const lamp = new THREE.Group(); const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.07, 4.4, 7), materials.rail); pole.position.y = 2.25; lamp.add(pole);
       const arm = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.12), materials.rail); arm.position.set(-side * 0.9, 4.3, 0); lamp.add(arm);
@@ -114,7 +140,9 @@ function addWorld(data) {
   // Cable-stayed pylons and fine cables at four cinematic spans.
   for (const fraction of [0.18, 0.28, 0.72, 0.82]) {
     const frame = roadFrame(routeLength * fraction);
-    for (const side of [-1, 1]) {
+    if (pylonTemplate) {
+      const pylon = pylonTemplate.clone(true); pylon.scale.setScalar(SCALE); pylon.position.copy(frame.point); pylon.position.y = 0.16; pylon.rotation.y = frame.yaw; scene.add(pylon);
+    } else for (const side of [-1, 1]) {
       const tower = new THREE.Mesh(new THREE.BoxGeometry(0.55, 24, 0.55), mat('#aab4b7', 0.34, 0.65)); tower.position.copy(frame.point).addScaledVector(frame.right, side * (ROAD_HALF + 1.8)); tower.y += 12.2; scene.add(tower);
     }
     for (const side of [-1, 1]) for (let j = 0; j < 8; j++) {
@@ -136,6 +164,17 @@ function makeEnvironment(timeOfDay) {
   const tones = { Morning: ['#a7c9d8', '#f1c79b', 0xffe0b0], Day: ['#87b6cd', '#d3e1db', 0xffffff], Sunset: ['#65496d', '#ef9f72', 0xffc179], Night: ['#101a34', '#2a315b', 0x99b8ff] };
   const [sky, horizon, sun] = tones[timeOfDay] ?? tones.Sunset;
   scene.background = new THREE.Color(sky);
+  const skyGeometry = new THREE.SphereGeometry(1500, 40, 20);
+  const positions = skyGeometry.getAttribute('position'); const colors = [];
+  const high = new THREE.Color(sky), low = new THREE.Color(horizon);
+  for (let i = 0; i < positions.count; i++) {
+    const height = positions.getY(i) / 1500;
+    const color = low.clone().lerp(high, THREE.MathUtils.smoothstep(height, -0.08, 0.62));
+    colors.push(color.r, color.g, color.b);
+  }
+  skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  const skyDome = new THREE.Mesh(skyGeometry, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false, fog: false }));
+  skyDome.frustumCulled = false; scene.add(skyDome); scene.userData.skyDome = skyDome;
   scene.fog = new THREE.Fog(horizon, 120, routeLength * 0.66);
   const hemi = new THREE.HemisphereLight(0xc5d8e9, 0x26303a, timeOfDay === 'Night' ? 0.6 : 1.45); scene.add(hemi);
   const key = new THREE.DirectionalLight(sun, timeOfDay === 'Night' ? 1.2 : 2.2); key.position.set(-60, 90, 40); scene.add(key);
@@ -187,6 +226,7 @@ function tick(now) {
   desired.x += frame.right.x * race.player.lane * SCALE * 0.25; desired.z += frame.right.z * race.player.lane * SCALE * 0.25;
   if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
   const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
+  scene.userData.skyDome.position.copy(camera.position);
   renderer.render(scene, camera); renderHud(now);
   if (result.collision) shake = Math.max(shake, 0.25 + race.player.speed * 0.006);
   for (const event of result.events) {
@@ -236,8 +276,13 @@ function dispose() {
 async function start(config) {
   dispose(); disposed = false; paused = false; raceConfig = config; lastFrame = 0; lastUi = 0; shake = 0;
   $('#pause-overlay').hidden = true; $('#finish-overlay').hidden = true; $('#event-banner').classList.remove('visible'); window.clearTimeout(eventTimeout);
-  const response = await fetch('/osm-sea-link.json'); if (!response.ok) throw new Error('Could not load the cached Sea Link route.');
-  const route = await response.json();
+  const loader = new GLTFLoader();
+  const model = (path) => loader.loadAsync(path).then((asset) => asset.scene).catch((error) => { console.warn(`${path} unavailable; using the lightweight fallback.`, error); return null; });
+  const [route, kartTemplate, pylonTemplate] = await Promise.all([
+    fetch('/osm-sea-link.json').then((response) => { if (!response.ok) throw new Error('Could not load the cached Sea Link route.'); return response.json(); }),
+    model('/models/sea-link-kart.glb'), model('/models/sea-link-pylon.glb'),
+  ]);
+  if (disposed) return;
   scene = new THREE.Scene();
   const [lon0, lat0] = route.route[0]; const cos = Math.cos(lat0 * Math.PI / 180);
   const raw = route.route.map(([lon, lat]) => new THREE.Vector3((lon - lon0) * 111320 * cos * SCALE, 0, (lat0 - lat) * 111320 * SCALE));
@@ -246,11 +291,7 @@ async function start(config) {
     const [prevLon, prevLat] = route.route[index]; const dx = (lon - prevLon) * 111320 * Math.cos(((lat + prevLat) * 0.5) * Math.PI / 180); const dz = (lat - prevLat) * 111320;
     return total + Math.hypot(dx, dz);
   }, 0);
-  makeEnvironment(config.timeOfDay); addWorld(route);
-  let kartTemplate;
-  try { kartTemplate = (await new GLTFLoader().loadAsync('/models/sea-link-kart.glb')).scene; }
-  catch (error) { console.warn('Kart model unavailable; using the lightweight fallback.', error); }
-  if (disposed) return;
+  makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate);
   kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
   const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
   rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
