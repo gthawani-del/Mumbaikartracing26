@@ -37,7 +37,8 @@ export function tick(race, input, elapsed) {
   const dt = clamp(elapsed, 0, 0.05);
   race.time += dt;
   const player = race.player;
-  const steer = Number(Boolean(input.right)) - Number(Boolean(input.left));
+  // Positive lane offset projects to screen-left from the chase camera.
+  const steer = Number(Boolean(input.left)) - Number(Boolean(input.right));
   const drifting = Boolean(input.drift) && steer !== 0 && player.speed > 9;
   const boosting =
     Boolean(input.boost) && Boolean(input.accelerate) && player.boost > 0.01 && !input.brake && player.speed > 4;

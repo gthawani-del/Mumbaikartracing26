@@ -274,9 +274,15 @@ h2 {
   gap: 8px;
 }
 #touch button {
+  min-height: 56px;
   padding: 20px 15px;
   background: #153b4bce;
   touch-action: none;
+}
+#touch button[data-control="left"],
+#touch button[data-control="right"] {
+  width: 52px;
+  padding: 0;
 }
 #touch button.active {
   background: #eeba64;
@@ -346,7 +352,12 @@ h2 {
   }
   #touch button {
     font-size: 10px;
-    padding: 20px 12px;
+    padding: 12px;
+  }
+  #touch button[data-control="left"],
+  #touch button[data-control="right"] {
+    width: 52px;
+    padding: 0;
   }
 }
 @media (max-height: 600px) {

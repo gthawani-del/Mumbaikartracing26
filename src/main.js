@@ -142,6 +142,20 @@ function makeDriver(kart, index) {
   });
   kart.add(driver);
 }
+function addPlayerAccent(kart) {
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x29e0d0,
+    emissive: 0x06433e,
+    emissiveIntensity: 0.8,
+    roughness: 0.38,
+    metalness: 0.18,
+  });
+  const playerPlate = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.2, 0.06), material);
+  playerPlate.position.set(0, 0.55, -1.76);
+  playerPlate.castShadow = false;
+  playerPlate.receiveShadow = false;
+  kart.add(playerPlate);
+}
 function makeWheels(kart) {
   const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x171c20, roughness: 0.92 });
   const hubMaterial = new THREE.MeshStandardMaterial({
@@ -250,6 +264,7 @@ async function load() {
       karts.push(kart);
       makeWheels(kart);
       makeDriver(kart, i);
+      if (i === 0) addPlayerAccent(kart);
     }
     for (let i = 0; i < 24; i++) {
       const side = i % 2 ? 1 : -1;
@@ -267,7 +282,8 @@ async function load() {
       scene.add(p);
     }
     for (let i = 0; i < 8; i++) {
-      const at = locate(((i + 0.45) / 8) * length, -19),
+      const lane = i % 2 ? 6.7 : -6.7;
+      const at = locate(((i + 0.45) / 8) * length, lane),
         v = clone(i % 3 === 0 ? "bus" : "taxi", i % 3 === 0 ? 8 : 4.2);
       v.position.copy(at.p);
       v.rotation.y = at.angle;

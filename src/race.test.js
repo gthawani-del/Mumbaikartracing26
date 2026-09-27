@@ -43,7 +43,7 @@ test("lapping a rival never teleports the player", () => {
   assert.equal(place(r), 1);
 });
 
-test("steering is speed-sensitive, returns to center, and stays in the lane", () => {
+test("screen-relative steering is speed-sensitive and stays in the lane", () => {
   const r = newRace(10000);
   r.rivals = [];
   r.player.speed = 0;
@@ -52,10 +52,16 @@ test("steering is speed-sensitive, returns to center, and stays in the lane", ()
 
   r.player.speed = 25;
   for (let i = 0; i < 30; i++) tick(r, { right: true }, 0.05);
-  assert.ok(r.player.lane > 0);
+  assert.ok(r.player.lane < 0);
   for (let i = 0; i < 500; i++) tick(r, { right: true }, 0.05);
-  assert.ok(r.player.lane <= LANE_LIMIT);
+  assert.ok(r.player.lane >= -LANE_LIMIT);
   assert.equal(r.player.lateralSpeed, 0);
+
+  const left = newRace(10000);
+  left.rivals = [];
+  left.player.speed = 25;
+  for (let i = 0; i < 30; i++) tick(left, { left: true }, 0.05);
+  assert.ok(left.player.lane > 0);
 });
 
 test("frame time is capped, and invalid time does not change race state", () => {
