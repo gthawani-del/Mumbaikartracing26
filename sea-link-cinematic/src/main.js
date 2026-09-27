@@ -29,7 +29,7 @@ function renderMap(data) {
   mapLoading.hidden = true; window.routeData = data;
 }
 async function loadRoute() {
-  try { const response = await fetch('/osm-sea-link.json'); if (!response.ok) throw new Error(`Route data returned ${response.status}`); renderMap(await response.json()); }
+  try { const response = await fetch(new URL('./osm-sea-link.json', document.baseURI)); if (!response.ok) throw new Error(`Route data returned ${response.status}`); renderMap(await response.json()); }
   catch (error) { mapLoading.textContent = 'Route preview could not load. Check the local route data file.'; mapLoading.classList.add('error'); console.error('Failed to load cached OSM route geometry:', error); }
 }
 function updateSummary() {

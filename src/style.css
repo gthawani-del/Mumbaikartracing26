@@ -154,6 +154,25 @@ h1 em {
   font-size: 11px;
   color: #ccdbd8;
 }
+.sea-link-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  max-width: 330px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid #ffc86a8c;
+  border-radius: 10px;
+  background: #102f3bda;
+  color: #fff8e8;
+  text-decoration: none;
+}
+.sea-link-entry:hover { background: #224755; }
+.sea-link-entry:focus-visible { outline: 3px solid #ffd473; outline-offset: 4px; }
+.sea-link-entry strong { display: block; font-size: 13px; }
+.sea-link-entry small { margin-top: 5px; font-size: 9px; letter-spacing: .3px; }
+.sea-link-entry b { color: #ffc86a; font-size: 22px; }
 details {
   margin-top: 22px;
   font-size: 12px;

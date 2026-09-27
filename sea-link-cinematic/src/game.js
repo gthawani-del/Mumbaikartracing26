@@ -279,8 +279,8 @@ async function start(config) {
   const loader = new GLTFLoader();
   const model = (path) => loader.loadAsync(path).then((asset) => asset.scene).catch((error) => { console.warn(`${path} unavailable; using the lightweight fallback.`, error); return null; });
   const [route, kartTemplate, pylonTemplate] = await Promise.all([
-    fetch('/osm-sea-link.json').then((response) => { if (!response.ok) throw new Error('Could not load the cached Sea Link route.'); return response.json(); }),
-    model('/models/sea-link-kart.glb'), model('/models/sea-link-pylon.glb'),
+    fetch(new URL('./osm-sea-link.json', document.baseURI)).then((response) => { if (!response.ok) throw new Error('Could not load the cached Sea Link route.'); return response.json(); }),
+    model(new URL('./models/sea-link-kart.glb', document.baseURI).href), model(new URL('./models/sea-link-pylon.glb', document.baseURI).href),
   ]);
   if (disposed) return;
   scene = new THREE.Scene();

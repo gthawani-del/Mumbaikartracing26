@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "build": "vite build && vite build sea-link-cinematic --base=/sea-link-cinematic/ && mkdir -p dist/sea-link-cinematic && cp -R sea-link-cinematic/dist/. dist/sea-link-cinematic/",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test"
   },
