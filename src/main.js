@@ -515,7 +515,9 @@ function frame(now) {
   if (ready) {
     placeKarts();
     if (mode === "menu") {
-      const at = locate(clock * 3);
+      // Keep the landing view clear; the moving preview camera can pass
+      // through the palms and buildings placed along the circuit.
+      const at = locate(0);
       target.copy(at.p);
       target.y += 1;
       camTarget.copy(at.p).add(new THREE.Vector3(16, 9, 20));
