@@ -43,6 +43,8 @@ Existing paid jobs were recovered, with no regeneration. Each remesh task report
 
 ## Verification and current limits
 
-Production build and Node simulation tests pass: three-lap completion, bounds, braking, drift/boost, and collisions while lapping. Export buffers and model references are checked locally. Meshy renders and the auto's forward axis were visually checked.
+Production build and 10 Node simulation tests pass. They cover lap completion and finish order, braking, steering response and road limits, drift and boost, frame-time spikes, collision spacing, and boost input rules. Race controls are keyboard-based on desktop and use touch buttons with automatic acceleration on touchscreens.
 
-Full browser/mobile gameplay QA remains unverified in the build workspace: no installed Chromium, browser download failed, and the cloud browser blocks localhost. Test the deployed site before treating this as a release candidate. The generated auto is a single static mesh: wheels are not separately animated, and there is no driver model. Rival markers distinguish otherwise shared auto models. No multiplayer or server leaderboard is included.
+The circuit now uses a dusk palette, smaller roadside buildings, a lower chase camera, warm promenade lights, differentiated autos, procedural drivers, rotating procedural wheels, tuned asphalt, and filtered engine audio. The base auto remains a single Meshy mesh, so the added wheels and drivers are visual attachments rather than a full vehicle rig.
+
+The Vercel build completed successfully on `main`. Full gameplay QA could not be completed in the cloud browser because that browser reports WebGL as unavailable. Run the deployed game on a WebGL-capable desktop and phone before treating it as a release candidate. There is no multiplayer or server leaderboard.
