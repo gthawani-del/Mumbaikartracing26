@@ -2,6 +2,25 @@ export const LAPS = 3;
 export const ROAD_HALF_WIDTH = 8;
 export const KART_HALF_WIDTH = 0.7;
 export const LANE_LIMIT = ROAD_HALF_WIDTH - KART_HALF_WIDTH - 0.7;
+export const HANDLING = Object.freeze({
+  topSpeed: 32,
+  boostTopSpeed: 44,
+  acceleration: 22,
+  boostAcceleration: 28,
+  coastDeceleration: 3.5,
+  brakeDeceleration: 32,
+  steeringSpeed: 6.3,
+  driftSteeringSpeed: 9.2,
+  steeringResponse: 12,
+  steeringReturnResponse: 6.5,
+  driftResponse: 5.5,
+  wallBounceSpeed: 1.6,
+  spinoutSpeedThreshold: 20,
+  spinoutDuration: 0.9,
+  spinoutDeceleration: 34,
+  impactCooldown: 0.3,
+  spinoutCooldown: 1.2,
+});
 
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -17,6 +36,10 @@ export function newRace(length) {
       speed: 0,
       boost: 0.65,
       drift: 0,
+      spinoutTime: 0,
+      spinoutDirection: 1,
+      spinoutAngle: 0,
+      impactCooldown: 0,
       finishTime: null,
     },
     rivals: Array.from({ length: 5 }, (_, i) => ({
@@ -44,33 +67,100 @@ export function tick(race, input, elapsed) {
   race.time += dt;
   const player = race.player;
   const previousDistance = player.distance;
+  const spinningAtStepStart = player.spinoutTime > 0;
+  player.impactCooldown = Math.max(0, player.impactCooldown - dt);
+  if (spinningAtStepStart) {
+    player.spinoutTime = Math.max(0, player.spinoutTime - dt);
+    const fullTurn = Math.PI * 2;
+    player.spinoutAngle =
+      (player.spinoutAngle +
+        player.spinoutDirection * fullTurn * (dt / HANDLING.spinoutDuration) +
+        fullTurn) %
+      fullTurn;
+  }
+
+  let impact = false;
+  let impactSpeed = 0;
+  let impactType = null;
+  let impactSide = 0;
+  let spinoutStarted = false;
+  const registerImpact = (type, speed, side = 0, severeThreshold = Infinity) => {
+    if (player.impactCooldown > 0) return;
+    impact = true;
+    impactSpeed = speed;
+    impactType = type;
+    impactSide = side;
+    const severe = !spinningAtStepStart && speed >= severeThreshold;
+    player.impactCooldown = severe
+      ? HANDLING.spinoutCooldown
+      : HANDLING.impactCooldown;
+    if (severe) {
+      player.spinoutTime = HANDLING.spinoutDuration;
+      player.spinoutDirection = Math.sign(side || 1);
+      player.spinoutAngle = 0;
+      player.lateralSpeed *= 0.35;
+      player.speed = Math.max(
+        0,
+        player.speed - HANDLING.spinoutDeceleration * dt,
+      );
+      spinoutStarted = true;
+    }
+  };
+
   // Positive lane offset projects to screen-left from the chase camera.
-  const steer = Number(Boolean(input.left)) - Number(Boolean(input.right));
-  const drifting = Boolean(input.drift) && steer !== 0 && player.speed > 9;
+  const steer = spinningAtStepStart
+    ? 0
+    : Number(Boolean(input.left)) - Number(Boolean(input.right));
+  const drifting =
+    !spinningAtStepStart && Boolean(input.drift) && steer !== 0 && player.speed > 9;
   const boosting =
-    Boolean(input.boost) && Boolean(input.accelerate) && player.boost > 0.01 && !input.brake && player.speed > 4;
+    !spinningAtStepStart &&
+    Boolean(input.boost) &&
+    Boolean(input.accelerate) &&
+    player.boost > 0.01 &&
+    !input.brake &&
+    player.speed > 4;
 
-  const topSpeed = boosting ? 42 : 31;
-  if (input.brake) player.speed = Math.max(0, player.speed - 34 * dt);
+  const topSpeed = boosting ? HANDLING.boostTopSpeed : HANDLING.topSpeed;
+  if (spinningAtStepStart)
+    player.speed = Math.max(0, player.speed - HANDLING.spinoutDeceleration * dt);
+  else if (input.brake)
+    player.speed = Math.max(0, player.speed - HANDLING.brakeDeceleration * dt);
   else if (input.accelerate)
-    player.speed = Math.min(topSpeed, player.speed + (boosting ? 25 : 18) * dt);
-  else player.speed = Math.max(0, player.speed - 5 * dt);
+    player.speed = Math.min(
+      topSpeed,
+      player.speed +
+        (boosting ? HANDLING.boostAcceleration : HANDLING.acceleration) * dt,
+    );
+  else player.speed = Math.max(0, player.speed - HANDLING.coastDeceleration * dt);
 
-  if (!boosting && player.speed > 31)
-    player.speed = Math.max(31, player.speed - 18 * dt);
+  if (!boosting && player.speed > HANDLING.topSpeed)
+    player.speed = Math.max(HANDLING.topSpeed, player.speed - 18 * dt);
 
-  const steeringSpeed = (drifting ? 8.2 : 5.4) * clamp(player.speed / 14, 0, 1);
+  const steeringSpeed =
+    (drifting ? HANDLING.driftSteeringSpeed : HANDLING.steeringSpeed) *
+    clamp(player.speed / 14, 0, 1);
   const desiredLateralSpeed = steer * steeringSpeed;
-  const steeringResponse = drifting ? 4.5 : steer === 0 ? 7.5 : 10;
+  const steeringResponse = spinningAtStepStart
+    ? HANDLING.steeringReturnResponse
+    : drifting
+      ? HANDLING.driftResponse
+      : steer === 0
+        ? HANDLING.steeringReturnResponse
+        : HANDLING.steeringResponse;
   player.lateralSpeed +=
     (desiredLateralSpeed - player.lateralSpeed) *
     Math.min(1, steeringResponse * dt);
   player.lane += player.lateralSpeed * dt;
 
+  let wallScrape = false;
   if (Math.abs(player.lane) > LANE_LIMIT) {
+    const wallSide = Math.sign(player.lane);
     player.lane = clamp(player.lane, -LANE_LIMIT, LANE_LIMIT);
-    player.lateralSpeed = 0;
+    player.lateralSpeed = -wallSide * HANDLING.wallBounceSpeed;
     player.speed = Math.max(0, player.speed - (steer ? 10 : 3) * dt);
+    wallScrape = true;
+    registerImpact("wall", player.speed, wallSide);
   }
 
   const boostChange = boosting ? -0.38 : drifting ? 0.24 : 0.012;
@@ -90,6 +180,11 @@ export function tick(race, input, elapsed) {
     const laneGap = Math.abs(rival.lane - player.lane);
     if (Math.abs(distanceGap) < 3.6 && laneGap < 1.55) {
       contactSpeedTarget = Math.min(contactSpeedTarget, rival.speed);
+      registerImpact(
+        "rival",
+        Math.abs(player.speed - rival.speed),
+        Math.sign(player.lane - rival.lane),
+      );
       const previousGap = previousRivalDistance - previousDistance;
       // Keep cars separated throughout contact, so they never pass through
       // each other and then snap apart.
@@ -117,12 +212,21 @@ export function tick(race, input, elapsed) {
       if (touchingVehicle) {
         blockedByTraffic = true;
         contactSpeedTarget = 0;
+        const bus = vehicle.halfLength >= 4;
+        registerImpact(
+          "traffic",
+          player.speed,
+          Math.sign(player.lane - vehicle.lane),
+          bus
+            ? HANDLING.spinoutSpeedThreshold
+            : HANDLING.spinoutSpeedThreshold + 6,
+        );
       }
     }
   }
   if (Number.isFinite(contactSpeedTarget)) {
     // Keep speed and movement in sync without a one-frame impact impulse.
-    const deceleration = blockedByTraffic ? 28 : 24;
+    const deceleration = blockedByTraffic ? HANDLING.brakeDeceleration : 24;
     player.speed += clamp(
       contactSpeedTarget - player.speed,
       -deceleration * dt,
@@ -147,9 +251,14 @@ export function tick(race, input, elapsed) {
   }
 
   return {
-    collision: Number.isFinite(contactSpeedTarget),
-    boosting,
-    drifting,
+    collision: wallScrape || Number.isFinite(contactSpeedTarget),
+    impact,
+    impactSpeed,
+    impactType,
+    impactSide,
+    spinoutStarted,
+    boosting: boosting && !spinoutStarted,
+    drifting: drifting && !spinoutStarted,
   };
 }
 
