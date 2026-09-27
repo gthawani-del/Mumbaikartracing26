@@ -1,62 +1,122 @@
 export const LAPS = 3;
-export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+export const ROAD_HALF_WIDTH = 8;
+export const KART_HALF_WIDTH = 0.7;
+export const LANE_LIMIT = ROAD_HALF_WIDTH - KART_HALF_WIDTH - 0.7;
+
+export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
 export function newRace(length) {
   return {
     length,
     time: 0,
     finished: false,
-    player: { distance: 0, lane: 0, speed: 0, boost: 1, drift: 0 },
-    rivals: Array.from({ length: 5 }, (_, i) => ({
-      distance: 8 + i * 6,
-      lane: ((i % 3) - 1) * 4,
+    player: {
+      distance: 0,
+      lane: 0,
+      lateralSpeed: 0,
       speed: 0,
-      pace: 25 + i * 0.7,
+      boost: 0.65,
+      drift: 0,
+      collisionCooldown: 0,
+      finishTime: null,
+    },
+    rivals: Array.from({ length: 5 }, (_, i) => ({
+      distance: 6 + i * 6,
+      lane: [0, -3.2, 3.2, -3.2, 3.2][i],
+      speed: 0,
+      pace: 25.5 + i * 0.65,
+      finishTime: null,
     })),
   };
 }
-export function tick(r, input, dt) {
-  if (r.finished) return;
-  dt = clamp(dt, 0, 0.05);
-  r.time += dt;
-  const p = r.player;
-  const steering = Number(!!input.right) - Number(!!input.left);
-  const drifting = input.drift && !!steering && p.speed > 9;
-  const boosting = input.boost && p.boost > 0.01 && !input.brake && p.speed > 4;
-  const top = boosting ? 43 : 31;
-  const acceleration = input.brake ? -38 : input.accelerate ? 18 : -9;
-  p.speed = clamp(p.speed + acceleration * dt, 0, top);
-  if (!boosting && p.speed > 31) p.speed = Math.max(31, p.speed - 16 * dt);
-  p.lane += steering * dt * (drifting ? 8 : 6) * Math.min(1, p.speed / 6);
-  if (Math.abs(p.lane) > 6.6) {
-    p.lane = clamp(p.lane, -6.6, 6.6);
-    p.speed = Math.max(0, p.speed - 22 * dt);
+
+export function tick(race, input, elapsed) {
+  if (race.finished || !Number.isFinite(elapsed) || elapsed <= 0) return;
+
+  // Clamp long frames (tab switches / slow phones) to avoid a physics jump.
+  const dt = clamp(elapsed, 0, 0.05);
+  race.time += dt;
+  const player = race.player;
+  const steer = Number(Boolean(input.right)) - Number(Boolean(input.left));
+  const drifting = Boolean(input.drift) && steer !== 0 && player.speed > 9;
+  const boosting =
+    Boolean(input.boost) && Boolean(input.accelerate) && player.boost > 0.01 && !input.brake && player.speed > 4;
+
+  const topSpeed = boosting ? 42 : 31;
+  if (input.brake) player.speed = Math.max(0, player.speed - 34 * dt);
+  else if (input.accelerate)
+    player.speed = Math.min(topSpeed, player.speed + (boosting ? 25 : 18) * dt);
+  else player.speed = Math.max(0, player.speed - 5 * dt);
+
+  if (!boosting && player.speed > 31)
+    player.speed = Math.max(31, player.speed - 18 * dt);
+
+  const steeringSpeed = (drifting ? 8.2 : 5.4) * clamp(player.speed / 14, 0, 1);
+  const desiredLateralSpeed = steer * steeringSpeed;
+  const steeringResponse = drifting ? 4.5 : steer === 0 ? 7.5 : 10;
+  player.lateralSpeed +=
+    (desiredLateralSpeed - player.lateralSpeed) *
+    Math.min(1, steeringResponse * dt);
+  player.lane += player.lateralSpeed * dt;
+
+  if (Math.abs(player.lane) > LANE_LIMIT) {
+    player.lane = clamp(player.lane, -LANE_LIMIT, LANE_LIMIT);
+    player.lateralSpeed = 0;
+    player.speed = Math.max(0, player.speed - (steer ? 10 : 3) * dt);
   }
-  p.boost = clamp(
-    p.boost + (boosting ? -0.28 : drifting ? 0.19 : 0.022) * dt,
-    0,
-    1,
-  );
-  p.drift = drifting ? steering : 0;
-  p.distance += p.speed * dt;
-  for (let i = 0; i < r.rivals.length; i++) {
-    const o = r.rivals[i];
-    o.speed = Math.min(o.pace, o.speed + 12 * dt);
-    o.distance += o.speed * dt;
-    o.lane = Math.sin(r.time * 0.35 + i * 2) * 4.9;
-    let gap = (((o.distance - p.distance) % r.length) + r.length) % r.length;
-    if (gap < 3 && Math.abs(o.lane - p.lane) < 1.6 && p.speed > o.speed) {
-      p.speed = Math.max(0, o.speed - 3);
-      p.distance = Math.max(0, p.distance - (3 - gap));
+
+  const boostChange = boosting ? -0.38 : drifting ? 0.24 : 0.012;
+  player.boost = clamp(player.boost + boostChange * dt, 0, 1);
+  player.drift = drifting ? steer : 0;
+  player.collisionCooldown = Math.max(0, player.collisionCooldown - dt);
+  player.distance += player.speed * dt;
+
+  for (let i = 0; i < race.rivals.length; i++) {
+    const rival = race.rivals[i];
+    rival.speed = Math.min(rival.pace, rival.speed + 12 * dt);
+    rival.distance += rival.speed * dt;
+    rival.lane = [0, -3.2, 3.2, -3.2, 3.2][i] + Math.sin(race.time * 0.35 + i * 2) * 0.35;
+
+    const distanceGap = rival.distance - player.distance;
+    const laneGap = Math.abs(rival.lane - player.lane);
+    if (
+      player.collisionCooldown === 0 &&
+      Math.abs(distanceGap) < 3.6 &&
+      laneGap < 1.55
+    ) {
+      player.speed = Math.max(0, Math.min(player.speed, rival.speed) - 2.5);
+      if (distanceGap >= 0) player.distance = rival.distance - 3.6;
+      else player.distance = Math.max(player.distance, rival.distance + 3.6);
+      player.collisionCooldown = 0.55;
     }
   }
-  if (p.distance >= LAPS * r.length) {
-    p.distance = LAPS * r.length;
-    r.finished = true;
+
+  const finishDistance = LAPS * race.length;
+  for (const rival of race.rivals) {
+    if (rival.finishTime != null) continue;
+    if (rival.distance >= finishDistance) {
+      const excess = rival.distance - finishDistance;
+      rival.distance = finishDistance;
+      rival.finishTime = race.time - Math.min(dt, excess / Math.max(rival.speed, 0.01));
+    }
+  }
+
+  if (player.distance >= finishDistance) {
+    player.distance = finishDistance;
+    player.finishTime = race.time;
+    race.finished = true;
   }
 }
-export function place(r) {
-  return 1 + r.rivals.filter((o) => o.distance > r.player.distance).length;
+
+export function place(race) {
+  if (race.finished && race.player.finishTime !== null) {
+    return 1 + race.rivals.filter(
+      (rival) => rival.finishTime != null && rival.finishTime <= race.player.finishTime,
+    ).length;
+  }
+  return 1 + race.rivals.filter((rival) => rival.distance > race.player.distance).length;
 }
-export function formatTime(t) {
-  return `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+
+export function formatTime(seconds) {
+  return `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
 }

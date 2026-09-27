@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { newRace, tick, place } from "./race.js";
+import { newRace, tick, place, LANE_LIMIT } from "./race.js";
 const drive = { accelerate: true };
 test("three laps finish once and freeze the race", () => {
   const r = newRace(100);
@@ -41,4 +41,75 @@ test("lapping a rival never teleports the player", () => {
   tick(r, drive, 0.016);
   assert.ok(r.player.distance > 198 && r.player.distance < 202);
   assert.equal(place(r), 1);
+});
+
+test("steering is speed-sensitive, returns to center, and stays in the lane", () => {
+  const r = newRace(10000);
+  r.rivals = [];
+  r.player.speed = 0;
+  tick(r, { right: true }, 0.05);
+  assert.equal(r.player.lane, 0);
+
+  r.player.speed = 25;
+  for (let i = 0; i < 30; i++) tick(r, { right: true }, 0.05);
+  assert.ok(r.player.lane > 0);
+  for (let i = 0; i < 500; i++) tick(r, { right: true }, 0.05);
+  assert.ok(r.player.lane <= LANE_LIMIT);
+  assert.equal(r.player.lateralSpeed, 0);
+});
+
+test("frame time is capped, and invalid time does not change race state", () => {
+  const r = newRace(10000);
+  r.rivals = [];
+  r.player.speed = 20;
+  tick(r, drive, 10);
+  assert.equal(r.time, 0.05);
+  assert.ok(r.player.distance < 2);
+  const state = { ...r.player };
+  tick(r, drive, Number.NaN);
+  assert.deepEqual(r.player, state);
+});
+
+test("collision separates karts and cooldown prevents repeated impacts", () => {
+  const r = newRace(10000);
+  r.player.speed = 25;
+  r.rivals = [{ distance: 0.5, lane: 0, speed: 24, pace: 24 }];
+  tick(r, drive, 0.016);
+  assert.ok(Math.abs(r.rivals[0].distance - r.player.distance) >= 2.7);
+  const afterImpactSpeed = r.player.speed;
+  tick(r, drive, 0.05);
+  assert.ok(r.player.speed >= afterImpactSpeed);
+});
+
+test("boost cannot drain below zero or exceed the regular speed limit", () => {
+  const r = newRace(10000);
+  r.rivals = [];
+  r.player.boost = 0.01;
+  r.player.speed = 41;
+  for (let i = 0; i < 100; i++) tick(r, { ...drive, boost: true }, 0.05);
+  assert.ok(r.player.boost >= 0 && r.player.boost <= 1);
+  assert.ok(r.player.speed <= 42);
+  for (let i = 0; i < 100; i++) tick(r, drive, 0.05);
+  assert.ok(r.player.speed <= 31);
+});
+
+test("boost does not activate without throttle", () => {
+  const r = newRace(10000);
+  r.rivals = [];
+  r.player.boost = 0.5;
+  r.player.speed = 20;
+  tick(r, { boost: true }, 0.05);
+  assert.ok(r.player.boost > 0.5);
+  assert.ok(r.player.speed < 20);
+});
+
+test("rivals stop at the finish and finish order determines the result", () => {
+  const r = newRace(10);
+  r.rivals = [{ distance: 29.5, lane: 3, speed: 30, pace: 30, finishTime: null }];
+  r.player.distance = 29.5;
+  r.player.speed = 31;
+  tick(r, drive, 0.05);
+  assert.equal(r.finished, true);
+  assert.equal(r.rivals[0].distance, 30);
+  assert.equal(place(r), 2);
 });
