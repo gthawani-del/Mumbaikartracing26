@@ -87,6 +87,25 @@ test("collision separates karts and cooldown prevents repeated impacts", () => {
   assert.ok(r.player.speed >= afterImpactSpeed);
 });
 
+test("road traffic blocks the racing line on every lap and can be passed around", () => {
+  const r = newRace(100);
+  r.rivals = [];
+  r.traffic = [{ distance: 10, lane: 0, halfLength: 4, halfWidth: 1 }];
+  r.player.distance = 103;
+  r.player.speed = 24;
+
+  const stopDistance = 110 - 5.8;
+  tick(r, { accelerate: true }, 0.05);
+  assert.ok(r.player.distance <= stopDistance + 1e-6);
+  assert.ok(r.player.speed < 24);
+  for (let i = 0; i < 29; i++) tick(r, { accelerate: true }, 0.05);
+  assert.ok(r.player.distance <= stopDistance + 1e-6);
+
+  r.player.lane = 3;
+  tick(r, { accelerate: true }, 0.05);
+  assert.ok(r.player.distance > stopDistance);
+});
+
 test("boost cannot drain below zero or exceed the regular speed limit", () => {
   const r = newRace(10000);
   r.rivals = [];

@@ -27,6 +27,12 @@ export function newRace(length) {
       pace: 25.5 + i * 0.65,
       finishTime: null,
     })),
+    traffic: Array.from({ length: 8 }, (_, i) => ({
+      distance: ((i + 0.45) / 8) * length,
+      lane: i % 2 ? 6.7 : -6.7,
+      halfLength: i % 3 === 0 ? 4 : 2.1,
+      halfWidth: i % 3 === 0 ? 1 : 0.75,
+    })),
   };
 }
 
@@ -37,6 +43,7 @@ export function tick(race, input, elapsed) {
   const dt = clamp(elapsed, 0, 0.05);
   race.time += dt;
   const player = race.player;
+  const previousDistance = player.distance;
   // Positive lane offset projects to screen-left from the chase camera.
   const steer = Number(Boolean(input.left)) - Number(Boolean(input.right));
   const drifting = Boolean(input.drift) && steer !== 0 && player.speed > 9;
@@ -89,6 +96,24 @@ export function tick(race, input, elapsed) {
       if (distanceGap >= 0) player.distance = rival.distance - 3.6;
       else player.distance = Math.max(player.distance, rival.distance + 3.6);
       player.collisionCooldown = 0.55;
+    }
+  }
+
+  // Roadside traffic repeats with the circuit and blocks the racing line physically.
+  const firstLap = Math.max(0, Math.floor(previousDistance / race.length));
+  for (const vehicle of race.traffic) {
+    if (Math.abs(vehicle.lane - player.lane) >= vehicle.halfWidth + KART_HALF_WIDTH) continue;
+    const clearance = vehicle.halfLength + 1.8;
+    for (let lap = firstLap; lap <= firstLap + 1; lap++) {
+      const obstacleDistance = vehicle.distance + lap * race.length;
+      const stopDistance = obstacleDistance - clearance;
+      if (previousDistance <= stopDistance && player.distance > stopDistance) {
+        player.distance = stopDistance;
+        if (player.collisionCooldown === 0) {
+          player.speed = Math.max(0, player.speed - 8);
+          player.collisionCooldown = 0.55;
+        }
+      }
     }
   }
 

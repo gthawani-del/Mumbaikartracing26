@@ -22,6 +22,7 @@ Deploy as a Vite static project: build command `npm run build`, output directory
 - Space + steer: drift and recharge boost.
 - Shift: boost. Escape: pause/resume.
 - Touch: automatic acceleration, on-screen steering, brake, drift and boost.
+- Buses and taxis are on-road traffic. Impacts slow and block the auto until you steer around them.
 
 This is assisted arcade steering: the kart follows the circuit heading, while the player controls lateral placement and speed. It is not a free-steering driving simulator.
 
@@ -43,8 +44,8 @@ Existing paid jobs were recovered, with no regeneration. Each remesh task report
 
 ## Verification and current limits
 
-Production build and 10 Node simulation tests pass. They cover lap completion and finish order, braking, steering response and road limits, drift and boost, frame-time spikes, collision spacing, and boost input rules. Race controls are keyboard-based on desktop and use touch buttons with automatic acceleration on touchscreens.
+Production build and 11 Node simulation tests pass. They cover lap completion and finish order, braking, steering response and road limits, drift and boost, frame-time spikes, rival collisions, on-road traffic impacts and avoidance, and boost input rules. Race controls are keyboard-based on desktop and use touch buttons with automatic acceleration on touchscreens.
 
 The circuit now uses a dusk palette, smaller roadside buildings, a lower chase camera, warm promenade lights, differentiated autos, procedural drivers, rotating procedural wheels, tuned asphalt, and filtered engine audio. The base auto remains a single Meshy mesh, so the added wheels and drivers are visual attachments rather than a full vehicle rig.
 
-The Vercel build completed successfully on `main`. Full gameplay QA could not be completed in the cloud browser because that browser reports WebGL as unavailable. Run the deployed game on a WebGL-capable desktop and phone before treating it as a release candidate. There is no multiplayer or server leaderboard.
+Browser smoke QA passed in Chromium with software WebGL: circuit and assets load, desktop and touchscreen acceleration work, pause/resume works, and no JavaScript errors were reported. Physical iPhone behavior and the latest Vercel deployment have not been verified. There is no multiplayer or server leaderboard.
