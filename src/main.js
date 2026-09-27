@@ -526,6 +526,7 @@ function showRace(active) {
 function start() {
   if (!ready) return;
   race = newRace(length);
+  physicsAccumulator = 0;
   mode = "countdown";
   count = 3;
   clearInput();
@@ -682,11 +683,15 @@ function minimap() {
   });
 }
 const target = new THREE.Vector3(),
+  lookTarget = new THREE.Vector3(),
   camTarget = new THREE.Vector3();
+let cameraTargetInitialized = false;
+let physicsAccumulator = 0;
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min((now - last) / 1000, 0.05);
+  const elapsed = Math.max(0, (now - last) / 1000);
+  const dt = Math.min(elapsed, 0.05);
   last = now;
   clock += dt;
   if (mode === "countdown") {
@@ -699,7 +704,12 @@ function frame(now) {
   }
   let physicsEvents = null;
   if (mode === "racing") {
-    physicsEvents = tick(race, { ...input, accelerate: touch || input.accelerate }, dt);
+    physicsAccumulator += elapsed;
+    while (physicsAccumulator > 0 && !race.finished) {
+      const step = Math.min(physicsAccumulator, 0.05);
+      physicsEvents = tick(race, { ...input, accelerate: touch || input.accelerate }, step);
+      physicsAccumulator = Math.max(0, physicsAccumulator - step);
+    }
     for (let i = 0; i < wheelSets.length; i++) {
       const kartSpeed = i === 0 ? race.player.speed : race.rivals[i - 1]?.speed ?? 0;
       const wheels = wheelSets[i];
@@ -709,6 +719,8 @@ function frame(now) {
       }
     }
     if (race.finished) finish();
+  } else {
+    physicsAccumulator = 0;
   }
   if (ready) {
     placeKarts();
@@ -717,17 +729,24 @@ function frame(now) {
       // Keep the landing view clear; the moving preview camera can pass
       // through the palms and buildings placed along the circuit.
       const at = locate(0);
-      target.copy(at.p);
-      target.y += 1;
+      lookTarget.copy(at.p);
+      lookTarget.y += 1;
       camTarget.copy(at.p).add(new THREE.Vector3(16, 9, 20));
     } else {
       const at = locate(race.player.distance, race.player.lane);
-      target.copy(at.p).addScaledVector(at.v, 10);
-      target.y += 1.7;
+      lookTarget.copy(at.p).addScaledVector(at.v, 10);
+      lookTarget.y += 1.7;
       camTarget.copy(at.p).addScaledVector(at.v, -11);
       camTarget.y += 2.8;
     }
-    camera.position.lerp(camTarget, 1 - Math.exp(-dt * 4));
+    const cameraSmoothing = 1 - Math.exp(-dt * 4);
+    camera.position.lerp(camTarget, cameraSmoothing);
+    if (!cameraTargetInitialized) {
+      target.copy(lookTarget);
+      cameraTargetInitialized = true;
+    } else {
+      target.lerp(lookTarget, cameraSmoothing);
+    }
     if (impactShakeTime > 0) {
       const shake = (impactShakeTime / 0.22) * 0.16;
       camera.position.x += Math.sin(clock * 58) * shake;
