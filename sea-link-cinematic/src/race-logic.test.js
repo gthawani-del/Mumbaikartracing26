@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRace, stepRace } from './race-logic.js';
+import { createRace, stepRace, advanceRace } from './race-logic.js';
 
 test('creates the requested rival field and an open point-to-point course', () => {
   const race = createRace({ length: 120, rivals: 7 });
@@ -14,6 +14,16 @@ test('forward input advances the player and rivals independently', () => {
   for (let i = 0; i < 80; i++) stepRace(race, { accelerate: true }, 0.05);
   assert.ok(race.player.distance > 0);
   assert.ok(race.rivals.every((rival) => rival.distance > 0));
+});
+
+test('a slow frame advances the same race time as smaller physics steps', () => {
+  const slow = createRace({ length: 1000, rivals: 0 });
+  const regular = createRace({ length: 1000, rivals: 0 });
+  advanceRace(slow, { accelerate: true }, 0.14);
+  for (const dt of [0.05, 0.05, 0.04]) stepRace(regular, { accelerate: true }, dt);
+  assert.ok(Math.abs(slow.player.distance - regular.player.distance) < 1e-8);
+  assert.ok(Math.abs(slow.player.speed - regular.player.speed) < 1e-8);
+  assert.ok(Math.abs(slow.elapsed - 0.14) < 1e-8);
 });
 
 test('left and right inputs move the kart toward the matching side of the route', () => {

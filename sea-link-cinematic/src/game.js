@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createRace, stepRace, clamp } from './race-logic.js';
+import { createRace, advanceRace, clamp } from './race-logic.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SCALE = 0.28;
@@ -217,8 +217,8 @@ function stepPosition() { return 1 + race.rivals.filter((rival) => rival.distanc
 function tick(now) {
   if (disposed || paused) return;
   raf = requestAnimationFrame(tick);
-  const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.05) : 1 / 60; lastFrame = now;
-  const result = stepRace(race, controls(), dt);
+  const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.25) : 1 / 60; lastFrame = now;
+  const result = advanceRace(race, controls(), dt);
   updateKart(kart, race.player.distance, race.player.lane, dt, true);
   race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
   const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 4.8); look.y += 1.1;

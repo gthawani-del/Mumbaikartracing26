@@ -122,3 +122,16 @@ export function stepRace(race, input, elapsed) {
   const position = 1 + race.rivals.filter((rival) => rival.distance > player.distance).length;
   return { events: messages, collision, drifting, boosting, position };
 }
+
+export function advanceRace(race, input, elapsed) {
+  if (!Number.isFinite(elapsed) || elapsed <= 0) return { events: [], collision: false };
+  const events = []; let collision = false; let result = { events, collision };
+  let remaining = Math.min(elapsed, 0.25);
+  while (remaining > 1e-8 && !race.finished) {
+    const step = Math.min(remaining, 0.05);
+    result = stepRace(race, input, step);
+    events.push(...result.events); collision ||= result.collision;
+    remaining -= step;
+  }
+  return { ...result, events, collision };
+}
