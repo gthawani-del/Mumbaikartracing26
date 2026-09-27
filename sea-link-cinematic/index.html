@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f6fb" />
+    <meta name="description" content="Set up a cinematic kart race across Mumbai's Bandra–Worli Sea Link." />
+    <title>Sea Link Race Setup | Mumbai Kart Racing</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="Mumbai Kart Racing home"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span class="brand-copy"><strong>MUMBAI KART</strong><small>RACING</small></span><span class="edition-tag">CINEMATIC</span></a>
+        <nav class="topnav" aria-label="Main navigation"><a class="active" href="#race-setup">Race setup</a><a href="#route-map">Route</a><a href="#preview">Preview</a></nav>
+        <button class="profile-button" aria-label="Player profile">GT</button>
+      </header>
+      <main id="top">
+        <section class="intro" id="race-setup">
+          <div><p class="eyebrow"><span class="live-dot"></span> REAL MUMBAI ROUTE · CINEMATIC RACE</p><h1>Race the <span>Sea Link.</span></h1><p class="intro-copy">Set up a point-to-point kart race on the real Bandra–Worli route.</p></div>
+          <div class="route-chip"><span class="route-chip-icon">↗</span><span><b>Bandra</b><i>to</i><b>Worli</b></span><small>ONE-WAY SPRINT</small></div>
+        </section>
+        <section class="workspace" aria-label="Race setup">
+          <div class="setup-column">
+            <div class="step-heading"><span class="step-number">01</span><div><h2>Choose your race</h2><p>The Sea Link route is ready. Tune the challenge.</p></div></div>
+            <article class="panel route-panel">
+              <div class="panel-label"><span class="label-icon">⌖</span><span>SELECTED ROUTE</span><span class="verified-pill">OSM ROUTE</span></div>
+              <div class="route-title-row"><div><h3>Bandra–Worli Sea Link</h3><p>Rajiv Gandhi Sea Link · Mahim Bay</p></div><span class="selected-check">✓</span></div>
+              <div class="route-facts"><span><b>POINT TO POINT</b><small>One-way course</small></span><span><b>3 SECTORS</b><small>Split-time checkpoints</small></span><span><b>SEA + SKYLINE</b><small>Custom 3D world</small></span></div>
+              <div class="route-note"><span>i</span><p>OSM supplies the road alignment. The bridge, sea, skyline and race effects are built for the game.</p></div>
+            </article>
+            <div class="step-heading compact"><span class="step-number">02</span><div><h2>Race settings</h2><p>Keep it fair. Make every run feel different.</p></div></div>
+            <article class="panel settings-panel">
+              <div class="setting-row"><div class="setting-copy"><b>AI rivals</b><small>Race against a full pack</small></div><div class="segmented" role="group" aria-label="Number of AI rivals"><button data-rivals="3">3</button><button data-rivals="5">5</button><button class="selected" data-rivals="7" aria-pressed="true">7</button></div></div>
+              <div class="setting-row"><div class="setting-copy"><b>Difficulty</b><small>Rival pace and tactics</small></div><div class="select-wrap"><select id="difficulty" aria-label="Difficulty"><option>Easy</option><option selected>Medium</option><option>Hard</option></select><span>⌄</span></div></div>
+              <div class="setting-row"><div class="setting-copy"><b>Time of day</b><small>Set the race atmosphere</small></div><div class="select-wrap"><select id="timeOfDay" aria-label="Time of day"><option>Morning</option><option>Day</option><option selected>Sunset</option><option>Night</option></select><span>⌄</span></div></div>
+            </article>
+            <div class="step-heading compact event-heading"><span class="step-number">03</span><div><h2>Surprise events</h2><p>Readable hazards with room to react.</p></div></div>
+            <div class="event-grid">
+              <button class="event-card enabled" data-event="crosswind" aria-pressed="true"><span class="event-icon">〰</span><span><b>Coastal crosswind</b><small>A brief sideways push</small></span><span class="toggle"><i></i></span></button>
+              <button class="event-card enabled" data-event="boost" aria-pressed="true"><span class="event-icon gate-icon">✦</span><span><b>Cable-shadow boost</b><small>Hold a clean racing line</small></span><span class="toggle"><i></i></span></button>
+            </div>
+            <div class="kart-summary"><div class="kart-mini-icon">◉</div><div><b>Player kart</b><small>Adult driver · open-frame racing kart</small></div><button class="text-button" type="button" id="kartInfo">View</button></div>
+          </div>
+          <div class="visual-column">
+            <article class="map-card" id="route-map">
+              <div class="map-header"><div><div class="map-title"><span class="map-pin">●</span><h2>Bandra <span>→</span> Worli</h2></div><p>Real route shape · southbound · 3 race sectors</p></div><span class="map-badge"><span>⌖</span> OpenStreetMap</span></div>
+              <div class="map-canvas" id="map-canvas" aria-label="Map preview of the Sea Link route">
+                <svg id="route-svg" viewBox="0 0 760 520" role="img" aria-label="OpenStreetMap road geometry with the Sea Link route highlighted"></svg>
+                <div class="map-compass"><span>N</span>↑</div><div class="map-zoom" aria-label="Map zoom controls"><button type="button" id="zoom-in" aria-label="Zoom in">+</button><button type="button" id="zoom-out" aria-label="Zoom out">−</button></div>
+                <div class="map-legends"><span><i class="legend-route"></i>Race route</span><span><i class="legend-road"></i>Mapped roads</span></div><div class="map-loading" id="map-loading">Loading route geometry…</div>
+              </div>
+              <div class="map-footer"><span><i class="status-dot"></i> OSM road alignment loaded</span><a href="https://www.openstreetmap.org/#map=14/19.028/72.819" target="_blank" rel="noreferrer">Open full map ↗</a></div>
+            </article>
+            <article class="preview-card" id="preview"><img src="/sea-link-kart-preview.webp" alt="Adult driver racing a kart across the Sea Link at sunset" /><div class="preview-scrim"></div><div class="preview-label"><span>IN-GAME LOOK</span><b>Golden hour · Sea Link</b></div><span class="preview-play" aria-hidden="true">▶</span><div class="preview-caption"><span class="preview-kicker">CINEMATIC PREVIEW</span><b>One real route. Your race.</b><small>Visual concept based on the selected route.</small></div></article>
+          </div>
+        </section>
+        <footer class="action-bar"><div class="action-summary"><span class="summary-icon">🏁</span><div><b id="summary-title">8 racers · 3 sectors · Sunset</b><small id="summary-subtitle">2 surprise events enabled · Bandra to Worli</small></div></div><div class="action-right"><span class="setup-status">RACE SETUP</span><button class="start-button" id="start-race">Review race setup <span>→</span></button></div></footer>
+        <div class="attribution">© OpenStreetMap contributors · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">ODbL</a><span>·</span> Static route snapshot, simplified for gameplay</div>
+      </main>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <dialog class="review-dialog" id="review-dialog"><div class="dialog-content"><button class="dialog-close" id="dialog-close" aria-label="Close">×</button><p class="eyebrow">RACE CHECK</p><h2>Ready for the Sea Link?</h2><p class="dialog-copy">Your point-to-point race is set. Start when you’re ready.</p><div class="dialog-detail" id="dialog-detail"></div><button class="dialog-button" id="launch-race">Launch Sea Link <span>→</span></button></div></dialog>
+      <section class="game-view" id="game-view" hidden aria-label="Sea Link race">
+        <div class="game-canvas" id="game-canvas"></div>
+        <div class="race-hud"><div class="hud-top"><div class="hud-brand">MUMBAI <b>· SEA LINK</b></div><div class="race-position"><strong id="hud-position">1</strong><span id="hud-field">/ 8</span><small>POSITION</small></div><button id="pause-race" class="hud-pause" aria-label="Pause race">Ⅱ</button></div>
+          <div class="hud-bottom"><div class="speed-card"><strong id="hud-speed">0</strong><small>KM/H</small></div><div class="race-progress"><div class="progress-label"><span id="hud-sector">BANDRA · START</span><span id="hud-time">00:00.0</span></div><div class="progress-track"><i id="hud-progress"></i></div><div class="progress-label progress-ends"><span>BANDRA</span><span>WORLI</span></div></div><div class="boost-card"><span>BOOST</span><i><b id="hud-boost"></b></i></div></div>
+        </div>
+        <div class="event-banner" id="event-banner" role="status"></div>
+        <div class="game-map-attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> · ODbL</div>
+        <div class="mobile-controls"><div class="steer-pad"><button data-control="left" aria-label="Steer left">←</button><button data-control="right" aria-label="Steer right">→</button></div><div class="drive-pad"><button data-control="brake" aria-label="Brake">BRAKE</button><button data-control="drift" aria-label="Drift">DRIFT</button><button data-control="boost" aria-label="Boost">BOOST</button><button data-control="accelerate" aria-label="Accelerate">GO</button></div></div>
+        <div class="race-overlay" id="pause-overlay" hidden><div class="race-modal"><p class="eyebrow">RACE PAUSED</p><h2>Take a breath.</h2><p>Sea Link sprint · Bandra to Worli</p><button id="resume-race" class="dialog-button">Resume race</button><button id="exit-race" class="exit-button">Back to setup</button></div></div>
+        <div class="race-overlay" id="finish-overlay" hidden><div class="race-modal"><p class="eyebrow">FINISH · WORLI</p><h2 id="finish-title">Race complete</h2><p id="finish-copy"></p><button id="restart-race" class="dialog-button">Race again</button><button id="finish-exit" class="exit-button">Back to setup</button></div></div>
+      </section>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
