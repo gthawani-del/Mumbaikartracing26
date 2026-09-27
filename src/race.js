@@ -17,7 +17,6 @@ export function newRace(length) {
       speed: 0,
       boost: 0.65,
       drift: 0,
-      collisionCooldown: 0,
       finishTime: null,
     },
     rivals: Array.from({ length: 5 }, (_, i) => ({
@@ -76,31 +75,31 @@ export function tick(race, input, elapsed) {
   const boostChange = boosting ? -0.38 : drifting ? 0.24 : 0.012;
   player.boost = clamp(player.boost + boostChange * dt, 0, 1);
   player.drift = drifting ? steer : 0;
-  player.collisionCooldown = Math.max(0, player.collisionCooldown - dt);
   player.distance += player.speed * dt;
 
+  let contactSpeedTarget = Infinity;
   for (let i = 0; i < race.rivals.length; i++) {
     const rival = race.rivals[i];
+    const previousRivalDistance = rival.distance;
     rival.speed = Math.min(rival.pace, rival.speed + 12 * dt);
     rival.distance += rival.speed * dt;
     rival.lane = [0, -3.2, 3.2, -3.2, 3.2][i] + Math.sin(race.time * 0.35 + i * 2) * 0.35;
 
     const distanceGap = rival.distance - player.distance;
     const laneGap = Math.abs(rival.lane - player.lane);
-    if (
-      player.collisionCooldown === 0 &&
-      Math.abs(distanceGap) < 3.6 &&
-      laneGap < 1.55
-    ) {
-      player.speed = Math.max(0, Math.min(player.speed, rival.speed) - 2.5);
-      if (distanceGap >= 0) player.distance = rival.distance - 3.6;
+    if (Math.abs(distanceGap) < 3.6 && laneGap < 1.55) {
+      contactSpeedTarget = Math.min(contactSpeedTarget, rival.speed);
+      const previousGap = previousRivalDistance - previousDistance;
+      // Keep cars separated throughout contact, so they never pass through
+      // each other and then snap apart.
+      if (previousGap >= 0) player.distance = Math.min(player.distance, rival.distance - 3.6);
       else player.distance = Math.max(player.distance, rival.distance + 3.6);
-      player.collisionCooldown = 0.55;
     }
   }
 
   // Roadside traffic repeats with the circuit and blocks the racing line physically.
   const firstLap = Math.max(0, Math.floor(previousDistance / race.length));
+  let blockedByTraffic = false;
   for (const vehicle of race.traffic) {
     if (Math.abs(vehicle.lane - player.lane) >= vehicle.halfWidth + KART_HALF_WIDTH) continue;
     const clearance = vehicle.halfLength + 1.8;
@@ -109,12 +108,25 @@ export function tick(race, input, elapsed) {
       const stopDistance = obstacleDistance - clearance;
       if (previousDistance <= stopDistance && player.distance > stopDistance) {
         player.distance = stopDistance;
-        if (player.collisionCooldown === 0) {
-          player.speed = Math.max(0, player.speed - 8);
-          player.collisionCooldown = 0.55;
-        }
+      }
+      const touchingVehicle =
+        player.distance >= stopDistance - 0.01 &&
+        player.distance <= obstacleDistance + clearance &&
+        previousDistance <= obstacleDistance + clearance;
+      if (touchingVehicle) {
+        blockedByTraffic = true;
+        contactSpeedTarget = 0;
       }
     }
+  }
+  if (Number.isFinite(contactSpeedTarget)) {
+    // Keep speed and movement in sync without a one-frame impact impulse.
+    const deceleration = blockedByTraffic ? 28 : 24;
+    player.speed += clamp(
+      contactSpeedTarget - player.speed,
+      -deceleration * dt,
+      deceleration * dt,
+    );
   }
 
   const finishDistance = LAPS * race.length;

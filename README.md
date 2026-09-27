@@ -22,7 +22,7 @@ Deploy as a Vite static project: build command `npm run build`, output directory
 - Space + steer: drift and recharge boost.
 - Shift: boost. Escape: pause/resume.
 - Touch: automatic acceleration, on-screen steering, brake, drift and boost.
-- Buses and taxis are on-road traffic. Impacts slow and block the auto until you steer around them.
+- Buses and taxis are on-road traffic. Contact decelerates the auto smoothly and holds it until you steer around; rival contact keeps vehicles separated and reduces speed smoothly.
 
 This is assisted arcade steering: the kart follows the circuit heading, while the player controls lateral placement and speed. It is not a free-steering driving simulator.
 

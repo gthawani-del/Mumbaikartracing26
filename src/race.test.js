@@ -76,15 +76,31 @@ test("frame time is capped, and invalid time does not change race state", () => 
   assert.deepEqual(r.player, state);
 });
 
-test("collision separates karts and cooldown prevents repeated impacts", () => {
+test("kart contact keeps separation and changes speed without a jolt", () => {
   const r = newRace(10000);
-  r.player.speed = 25;
-  r.rivals = [{ distance: 0.5, lane: 0, speed: 24, pace: 24 }];
-  tick(r, drive, 0.016);
-  assert.ok(Math.abs(r.rivals[0].distance - r.player.distance) >= 2.7);
-  const afterImpactSpeed = r.player.speed;
-  tick(r, drive, 0.05);
-  assert.ok(r.player.speed >= afterImpactSpeed);
+  r.player.speed = 31;
+  r.rivals = [{ distance: 6, lane: 0, speed: 24, pace: 24 }];
+  let previousDistance = r.player.distance;
+  let previousSpeed = r.player.speed;
+  let firstContactSpeed;
+  for (let i = 0; i < 90; i++) {
+    tick(r, drive, 0.016);
+    assert.ok(r.player.distance >= previousDistance);
+    assert.ok(r.player.distance - previousDistance <= 31 * 0.016 + 1e-6);
+    assert.ok(previousSpeed - r.player.speed <= 24 * 0.016 + 1e-6);
+    previousDistance = r.player.distance;
+    previousSpeed = r.player.speed;
+    assert.ok(r.rivals[0].distance - r.player.distance >= 3.6 - 1e-6);
+    if (
+      firstContactSpeed === undefined &&
+      r.rivals[0].distance - r.player.distance <= 3.6 + 1e-6
+    ) {
+      firstContactSpeed = r.player.speed;
+    }
+  }
+  assert.ok(firstContactSpeed > 28);
+  assert.ok(r.player.speed < firstContactSpeed);
+  assert.ok(r.player.speed >= r.rivals[0].speed - 1e-6);
 });
 
 test("road traffic blocks the racing line on every lap and can be passed around", () => {
@@ -98,8 +114,9 @@ test("road traffic blocks the racing line on every lap and can be passed around"
   tick(r, { accelerate: true }, 0.05);
   assert.ok(r.player.distance <= stopDistance + 1e-6);
   assert.ok(r.player.speed < 24);
-  for (let i = 0; i < 29; i++) tick(r, { accelerate: true }, 0.05);
+  for (let i = 0; i < 50; i++) tick(r, { accelerate: true }, 0.05);
   assert.ok(r.player.distance <= stopDistance + 1e-6);
+  assert.equal(r.player.speed, 0);
 
   r.player.lane = 3;
   tick(r, { accelerate: true }, 0.05);
@@ -130,8 +147,10 @@ test("boost does not activate without throttle", () => {
 
 test("rivals stop at the finish and finish order determines the result", () => {
   const r = newRace(10);
+  r.traffic = [];
   r.rivals = [{ distance: 29.5, lane: 3, speed: 30, pace: 30, finishTime: null }];
   r.player.distance = 29.5;
+  r.player.lane = -3;
   r.player.speed = 31;
   tick(r, drive, 0.05);
   assert.equal(r.finished, true);
