@@ -36,7 +36,8 @@ export function newRace(length) {
 }
 
 export function tick(race, input, elapsed) {
-  if (race.finished || !Number.isFinite(elapsed) || elapsed <= 0) return;
+  if (race.finished || !Number.isFinite(elapsed) || elapsed <= 0)
+    return { collision: false, boosting: false, drifting: false };
 
   // Clamp long frames (tab switches / slow phones) to avoid a physics jump.
   const dt = clamp(elapsed, 0, 0.05);
@@ -144,6 +145,12 @@ export function tick(race, input, elapsed) {
     player.finishTime = race.time;
     race.finished = true;
   }
+
+  return {
+    collision: Number.isFinite(contactSpeedTarget),
+    boosting,
+    drifting,
+  };
 }
 
 export function place(race) {

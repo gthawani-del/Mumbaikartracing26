@@ -68,6 +68,10 @@ let race = newRace(length),
 const models = {},
   karts = [],
   wheelSets = [],
+  boostFlames = [],
+  smokePuffs = [],
+  skidMarks = [],
+  impactSparks = [],
   input = {
     left: false,
     right: false,
@@ -76,6 +80,12 @@ const models = {},
     drift: false,
     boost: false,
   };
+let smokeCursor = 0,
+  skidCursor = 0,
+  smokeClock = 0,
+  skidClock = 0,
+  impactShakeTime = 0,
+  contacting = false;
 const loader = new GLTFLoader();
 function locate(distance, lane = 0) {
   const t = (((distance / length) % 1) + 1) % 1,
@@ -155,6 +165,188 @@ function addPlayerAccent(kart) {
   playerPlate.castShadow = false;
   playerPlate.receiveShadow = false;
   kart.add(playerPlate);
+}
+function setupPlayerEffects(kart) {
+  const flameGeometry = new THREE.ConeGeometry(0.17, 0.72, 7);
+  const flameMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff9b43,
+    transparent: true,
+    opacity: 0.82,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  for (const x of [-0.27, 0.27]) {
+    const flame = new THREE.Mesh(flameGeometry, flameMaterial);
+    flame.rotation.x = -Math.PI / 2;
+    flame.position.set(x, 0.42, -2.08);
+    flame.visible = false;
+    kart.add(flame);
+    boostFlames.push(flame);
+  }
+
+  const smokeCanvas = document.createElement("canvas");
+  smokeCanvas.width = 64;
+  smokeCanvas.height = 64;
+  const smokeContext = smokeCanvas.getContext("2d");
+  const smokeGradient = smokeContext.createRadialGradient(32, 32, 2, 32, 32, 32);
+  smokeGradient.addColorStop(0, "rgba(240,243,240,0.62)");
+  smokeGradient.addColorStop(0.42, "rgba(220,226,222,0.34)");
+  smokeGradient.addColorStop(0.78, "rgba(205,213,209,0.12)");
+  smokeGradient.addColorStop(1, "rgba(205,213,209,0)");
+  smokeContext.fillStyle = smokeGradient;
+  smokeContext.fillRect(0, 0, 64, 64);
+  const smokeTexture = new THREE.CanvasTexture(smokeCanvas);
+  smokeTexture.colorSpace = THREE.SRGBColorSpace;
+  const smokeMaterial = new THREE.SpriteMaterial({
+    map: smokeTexture,
+    color: 0xd5dad7,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+  });
+  for (let i = 0; i < 8; i++) {
+    const puff = new THREE.Sprite(smokeMaterial.clone());
+    puff.visible = false;
+    puff.userData.age = 0;
+    scene.add(puff);
+    smokePuffs.push(puff);
+  }
+
+  const skidGeometry = new THREE.PlaneGeometry(0.2, 0.55);
+  const skidMaterial = new THREE.MeshBasicMaterial({
+    color: 0x171918,
+    transparent: true,
+    opacity: 0.32,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  for (let i = 0; i < 24; i++) {
+    const mark = new THREE.Mesh(skidGeometry, skidMaterial.clone());
+    mark.rotation.x = -Math.PI / 2;
+    mark.visible = false;
+    mark.userData.age = 0;
+    scene.add(mark);
+    skidMarks.push(mark);
+  }
+
+  const sparkGeometry = new THREE.SphereGeometry(0.055, 6, 4);
+  const sparkMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffc56a,
+    transparent: true,
+    depthWrite: false,
+  });
+  for (let i = 0; i < 8; i++) {
+    const spark = new THREE.Mesh(sparkGeometry, sparkMaterial.clone());
+    spark.visible = false;
+    spark.userData.velocity = new THREE.Vector3();
+    spark.userData.age = 0;
+    kart.add(spark);
+    impactSparks.push(spark);
+  }
+}
+function emitDriftEffects(kart) {
+  const rearWheels = [
+    new THREE.Vector3(-0.53, 0.24, -0.9),
+    new THREE.Vector3(0.53, 0.24, -0.9),
+  ];
+  for (const offset of rearWheels) {
+    const puff = smokePuffs[smokeCursor++ % smokePuffs.length];
+    puff.position.copy(kart.localToWorld(offset.clone()));
+    puff.scale.setScalar(0.55);
+    puff.material.opacity = 0.55;
+    puff.userData.age = 0;
+    puff.visible = true;
+
+    const mark = skidMarks[skidCursor++ % skidMarks.length];
+    const markPosition = kart.localToWorld(offset.clone());
+    mark.position.set(markPosition.x, 0.145, markPosition.z);
+    mark.rotation.set(-Math.PI / 2, kart.rotation.y, 0);
+    mark.material.opacity = 0.32;
+    mark.userData.age = 0;
+    mark.visible = true;
+  }
+}
+function startImpactBurst() {
+  impactShakeTime = 0.22;
+  for (let i = 0; i < impactSparks.length; i++) {
+    const spark = impactSparks[i];
+    const angle = (i / impactSparks.length) * Math.PI * 2;
+    spark.position.set(Math.cos(angle) * 0.36, 0.54 + (i % 3) * 0.08, 1.18);
+    spark.userData.velocity.set(
+      Math.cos(angle) * 3.6,
+      1.5 + (i % 3) * 1.05,
+      Math.sin(angle) * 2.4,
+    );
+    spark.userData.age = 0;
+    spark.material.opacity = 0.95;
+    spark.scale.setScalar(1);
+    spark.visible = true;
+  }
+}
+function updatePlayerEffects(dt, events) {
+  const boosting = mode === "racing" && Boolean(events?.boosting);
+  $("speed-lines").classList.toggle("active", boosting);
+  boostFlames.forEach((flame, i) => {
+    flame.visible = boosting;
+    if (boosting) {
+      const pulse = 0.78 + Math.sin(clock * 42 + i * 1.7) * 0.2;
+      flame.scale.set(0.8 + pulse * 0.25, pulse, 0.8 + pulse * 0.25);
+    }
+  });
+
+  const drifting = mode === "racing" && Boolean(events?.drifting);
+  if (drifting) {
+    smokeClock += dt;
+    skidClock += dt;
+    if (smokeClock >= 0.13 || skidClock >= 0.17) {
+      emitDriftEffects(karts[0]);
+      smokeClock = 0;
+      skidClock = 0;
+    }
+  } else {
+    smokeClock = 0;
+    skidClock = 0;
+  }
+
+  for (const puff of smokePuffs) {
+    if (!puff.visible) continue;
+    puff.userData.age += dt;
+    const progress = puff.userData.age / 0.72;
+    if (progress >= 1) {
+      puff.visible = false;
+      continue;
+    }
+    puff.position.y += dt * 0.3;
+    puff.scale.set(0.62 + progress * 0.78, 0.48 + progress * 0.56, 1);
+    puff.material.opacity = 0.55 * (1 - progress);
+  }
+  for (const mark of skidMarks) {
+    if (!mark.visible) continue;
+    mark.userData.age += dt;
+    const progress = mark.userData.age / 1.9;
+    if (progress >= 1) {
+      mark.visible = false;
+      continue;
+    }
+    mark.material.opacity = 0.32 * (1 - progress);
+  }
+
+  if (events?.collision && !contacting) startImpactBurst();
+  contacting = mode === "racing" && Boolean(events?.collision);
+  impactShakeTime = Math.max(0, impactShakeTime - dt);
+  for (const spark of impactSparks) {
+    if (!spark.visible) continue;
+    spark.userData.age += dt;
+    const progress = spark.userData.age / 0.28;
+    if (progress >= 1) {
+      spark.visible = false;
+      continue;
+    }
+    spark.position.addScaledVector(spark.userData.velocity, dt);
+    spark.userData.velocity.y -= 8 * dt;
+    spark.material.opacity = 0.95 * (1 - progress);
+    spark.scale.setScalar(1 - progress * 0.65);
+  }
 }
 function makeWheels(kart) {
   const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x171c20, roughness: 0.92 });
@@ -264,7 +456,10 @@ async function load() {
       karts.push(kart);
       makeWheels(kart);
       makeDriver(kart, i);
-      if (i === 0) addPlayerAccent(kart);
+      if (i === 0) {
+        addPlayerAccent(kart);
+        setupPlayerEffects(kart);
+      }
     }
     for (let i = 0; i < 24; i++) {
       const side = i % 2 ? 1 : -1;
@@ -334,6 +529,8 @@ function start() {
   mode = "countdown";
   count = 3;
   clearInput();
+  contacting = false;
+  impactShakeTime = 0;
   showRace(true);
   $("overlay").hidden = true;
   $("pause").textContent = "Pause";
@@ -500,8 +697,9 @@ function frame(now) {
       $("countdown").textContent = "";
     }
   }
+  let physicsEvents = null;
   if (mode === "racing") {
-    tick(race, { ...input, accelerate: touch || input.accelerate }, dt);
+    physicsEvents = tick(race, { ...input, accelerate: touch || input.accelerate }, dt);
     for (let i = 0; i < wheelSets.length; i++) {
       const kartSpeed = i === 0 ? race.player.speed : race.rivals[i - 1]?.speed ?? 0;
       const wheels = wheelSets[i];
@@ -514,6 +712,7 @@ function frame(now) {
   }
   if (ready) {
     placeKarts();
+    updatePlayerEffects(dt, physicsEvents);
     if (mode === "menu") {
       // Keep the landing view clear; the moving preview camera can pass
       // through the palms and buildings placed along the circuit.
@@ -529,6 +728,11 @@ function frame(now) {
       camTarget.y += 2.8;
     }
     camera.position.lerp(camTarget, 1 - Math.exp(-dt * 4));
+    if (impactShakeTime > 0) {
+      const shake = (impactShakeTime / 0.22) * 0.16;
+      camera.position.x += Math.sin(clock * 58) * shake;
+      camera.position.y += Math.cos(clock * 47) * shake * 0.55;
+    }
     camera.lookAt(target);
     $("speed").textContent = Math.round(race.player.speed * 3.6);
     $("lap").textContent =
