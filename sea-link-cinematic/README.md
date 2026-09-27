@@ -18,7 +18,7 @@ Run the race logic checks with `npm test`.
 
 - Responsive race setup UI inspired by the supplied PlayGen reference.
 - A separate Three.js point-to-point race scene that follows the cached Bandra-to-Worli OSM road alignment.
-- Procedural bridge deck, railings, lighting, cable pylons, ocean, skyline, player kart with an adult driver, and configurable AI rivals.
+- Procedural bridge deck, railings, lighting, cable pylons, ocean, and skyline. A standalone GLB kart with an adult driver is loaded from `public/models/sea-link-kart.glb` for the player and configurable AI rivals, with a lightweight fallback if it cannot load.
 - Configurable rival count, difficulty, time of day, crosswind and clean-line boost gate.
 - Keyboard and touch controls, chase camera, speed and position HUD, pause, finish results, and restart.
 - The existing Marine Drive game and its engine files remain untouched.

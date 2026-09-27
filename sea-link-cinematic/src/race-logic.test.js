@@ -39,10 +39,10 @@ test('route events fire at their sectors and a centered player earns the boost',
 
 test('lane limits prevent leaving the bridge deck', () => {
   const race = createRace({ length: 100, rivals: 0 });
-  race.player.lane = 10.59;
+  race.player.lane = 6.49;
   race.player.speed = 20;
   const result = stepRace(race, { right: true, accelerate: true }, 0.05);
-  assert.ok(Math.abs(race.player.lane) <= 10.6);
+  assert.ok(Math.abs(race.player.lane) <= 6.5);
   assert.ok(result.collision);
 });
 

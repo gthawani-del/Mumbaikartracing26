@@ -1,12 +1,14 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createRace, stepRace, clamp } from './race-logic.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SCALE = 0.28;
-const ROAD_HALF = 3.8;
+const KART_SCALE = 0.36;
+const ROAD_HALF = 2;
 const held = new Set();
 const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'accelerate', KeyW: 'accelerate', Space: 'accelerate', ArrowDown: 'brake', KeyS: 'brake', ShiftLeft: 'drift', ShiftRight: 'drift', KeyE: 'boost' };
-let renderer, scene, camera, race, curve, routeLength, routeMeters, kart, rivals = [], raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
+let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
 let disposed = false, paused = false;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
@@ -42,8 +44,24 @@ function makeKart(color = '#a63e35') {
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.23, 12), materials.hub); hub.rotation.z = Math.PI / 2; hub.position.copy(wheel.position); group.add(hub);
   }
   group.userData.wheels = group.children.filter((child) => child.geometry?.type === 'CylinderGeometry' && child.geometry.parameters.radiusTop === 0.32);
-  group.scale.setScalar(SCALE);
+  group.scale.setScalar(KART_SCALE);
   return group;
+}
+
+function modelKart(template, color) {
+  const object = template.clone(true);
+  const wheels = [];
+  object.traverse((part) => {
+    if (part.name.startsWith('Wheel')) wheels.push(part);
+    if (!part.isMesh || !color) return;
+    if (part.material.name === 'Crimson paint' || part.material.name === 'Fairing highlight') {
+      part.material = part.material.clone();
+      part.material.color.set(color);
+    }
+  });
+  object.userData.wheels = wheels;
+  object.scale.setScalar(KART_SCALE);
+  return object;
 }
 
 function addWorld(data) {
@@ -55,22 +73,27 @@ function addWorld(data) {
   const vertices = [], indices = [];
   for (let i = 0; i < samples.length; i++) {
     const p = samples[i], t = curve.getTangentAt(i / (samples.length - 1)); const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
-    for (const side of [-1, 1]) vertices.push(p.x + right.x * ROAD_HALF * side, 0.16 + Math.sin(i / 600 * Math.PI) * 0.25, p.z + right.z * ROAD_HALF * side);
+    for (const side of [-1, 1]) vertices.push(p.x + right.x * ROAD_HALF * side, 0.16, p.z + right.z * ROAD_HALF * side);
     if (i < samples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
   }
   const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ color: '#304d59', roughness: 0.44, metalness: 0.28 })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
-  const underside = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.8, routeLength), mat('#50545a', 0.65, 0.35)); underside.position.set(0, -0.35, routeLength / 2); scene.add(underside);
+  const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
   const railPosts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), materials.rail, 2 * 151);
-  const railRuns = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.12, 2), materials.rail, 2 * 151);
+  const railRuns = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.12, 1), materials.rail, 2 * 150);
   const dummy = new THREE.Object3D(); let postIndex = 0, runIndex = 0;
   for (let i = 0; i <= 150; i++) {
     const frame = roadFrame(routeLength * i / 150);
     for (const side of [-1, 1]) {
       const pos = frame.point.clone().addScaledVector(frame.right, side * (ROAD_HALF + 0.12));
       dummy.position.set(pos.x, 0.75, pos.z); dummy.rotation.set(0, frame.yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); railPosts.setMatrixAt(postIndex++, dummy.matrix);
-      if (i < 150) { const mid = pos.clone().addScaledVector(frame.tangent, 1); dummy.position.set(mid.x, 1.05, mid.z); dummy.rotation.set(0, frame.yaw, 0); dummy.updateMatrix(); railRuns.setMatrixAt(runIndex++, dummy.matrix); }
+      if (i < 150) {
+        const next = roadFrame(routeLength * (i + 1) / 150);
+        const end = next.point.clone().addScaledVector(next.right, side * (ROAD_HALF + 0.12));
+        const span = end.clone().sub(pos); const mid = pos.clone().add(end).multiplyScalar(0.5);
+        dummy.position.set(mid.x, 1.05, mid.z); dummy.rotation.set(0, Math.atan2(span.x, span.z), 0); dummy.scale.set(1, 1, span.length() + 0.08); dummy.updateMatrix(); railRuns.setMatrixAt(runIndex++, dummy.matrix);
+      }
     }
   }
   railPosts.count = postIndex; railRuns.count = runIndex; scene.add(railPosts, railRuns);
@@ -82,7 +105,7 @@ function addWorld(data) {
     markerTransform.position.set(p.x, 0.19, p.z); markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.updateMatrix(); centerMarks.setMatrixAt(markerCount++, markerTransform.matrix);
     if (i % 8 === 0) for (const side of [-1, 1]) {
       const lamp = new THREE.Group(); const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.07, 4.4, 7), materials.rail); pole.position.y = 2.25; lamp.add(pole);
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 2.2), materials.rail); arm.position.set(-side * 0.1, 4.3, 0); lamp.add(arm);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.12), materials.rail); arm.position.set(-side * 0.9, 4.3, 0); lamp.add(arm);
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), new THREE.MeshBasicMaterial({ color: '#ffd7a0' })); bulb.position.set(-side * 0.9, 4.22, 0); lamp.add(bulb);
       const offset = p.clone().addScaledVector(right, side * (ROAD_HALF + 0.55)); lamp.position.set(offset.x, 0, offset.z); lamp.rotation.y = Math.atan2(t.x, t.z); scene.add(lamp);
     }
@@ -94,9 +117,11 @@ function addWorld(data) {
     for (const side of [-1, 1]) {
       const tower = new THREE.Mesh(new THREE.BoxGeometry(0.55, 24, 0.55), mat('#aab4b7', 0.34, 0.65)); tower.position.copy(frame.point).addScaledVector(frame.right, side * (ROAD_HALF + 1.8)); tower.y += 12.2; scene.add(tower);
     }
-    for (let j = 0; j < 8; j++) {
-      const end = roadFrame(routeLength * (fraction + (j - 3.5) * 0.015)); const start = frame.point.clone().add(new THREE.Vector3(0, 23.8, 0));
-      const cable = new THREE.BufferGeometry().setFromPoints([start, end.point.clone().add(new THREE.Vector3(0, 0.9, 0))]); scene.add(new THREE.Line(cable, new THREE.LineBasicMaterial({ color: '#aab8c1', transparent: true, opacity: 0.52 })));
+    for (const side of [-1, 1]) for (let j = 0; j < 8; j++) {
+      const end = roadFrame(routeLength * (fraction + (j - 3.5) * 0.015));
+      const startPoint = frame.point.clone().addScaledVector(frame.right, side * (ROAD_HALF + 1.8)); startPoint.y = 22 - j * 0.6;
+      const endPoint = end.point.clone().addScaledVector(end.right, side * (ROAD_HALF + 0.1)); endPoint.y = 0.95;
+      const cable = new THREE.BufferGeometry().setFromPoints([startPoint, endPoint]); scene.add(new THREE.Line(cable, new THREE.LineBasicMaterial({ color: '#aab8c1', transparent: true, opacity: 0.62 })));
     }
   }
   // Distant coastal skyline clusters frame the bridge without blocking the sea.
@@ -129,10 +154,10 @@ function controls() {
 
 function updateKart(object, distance, lane, dt, playerKart = false) {
   const frame = roadFrame(routeLength * distance / race.length); const target = frame.point.clone().addScaledVector(frame.right, lane * SCALE);
-  object.position.set(target.x, 0, target.z); object.rotation.y = frame.yaw;
+  object.position.set(target.x, 0.16, target.z); object.rotation.y = frame.yaw;
   if (playerKart) {
-    object.position.y = Math.sin(performance.now() * 0.02) * 0.025;
-    for (const wheel of object.userData.wheels) wheel.rotation.x -= race.player.speed * dt * 0.22;
+    object.position.y += Math.sin(performance.now() * 0.012) * 0.004;
+    for (const wheel of object.userData.wheels) wheel.rotation.x -= race.player.speed * dt / 0.32;
     object.rotation.z = THREE.MathUtils.damp(object.rotation.z, -race.player.lateralSpeed * 0.018, 7, dt);
   }
 }
@@ -157,11 +182,11 @@ function tick(now) {
   const result = stepRace(race, controls(), dt);
   updateKart(kart, race.player.distance, race.player.lane, dt, true);
   race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
-  const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.5); look.y += 1.45;
-  const desired = frame.point.clone().addScaledVector(frame.tangent, -3.5).add(new THREE.Vector3(0, 2.5, 0));
+  const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 4.8); look.y += 1.1;
+  const desired = frame.point.clone().addScaledVector(frame.tangent, -2.4).add(new THREE.Vector3(0, 1.85, 0));
   desired.x += frame.right.x * race.player.lane * SCALE * 0.25; desired.z += frame.right.z * race.player.lane * SCALE * 0.25;
   if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
-  const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); camera.lookAt(look);
+  const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
   renderer.render(scene, camera); renderHud(now);
   if (result.collision) shake = Math.max(shake, 0.25 + race.player.speed * 0.006);
   for (const event of result.events) {
@@ -205,7 +230,7 @@ function dispose() {
   disposed = true; cancelAnimationFrame(raf); held.clear();
   if (renderer) { renderer.dispose(); renderer.domElement.remove(); }
   scene?.traverse((object) => { object.geometry?.dispose?.(); if (Array.isArray(object.material)) object.material.forEach((m) => m.dispose?.()); else object.material?.dispose?.(); });
-  renderer = scene = camera = null;
+  renderer = scene = camera = cameraTarget = null;
 }
 
 async function start(config) {
@@ -222,16 +247,20 @@ async function start(config) {
     return total + Math.hypot(dx, dz);
   }, 0);
   makeEnvironment(config.timeOfDay); addWorld(route);
-  kart = makeKart(); scene.add(kart);
+  let kartTemplate;
+  try { kartTemplate = (await new GLTFLoader().loadAsync('/models/sea-link-kart.glb')).scene; }
+  catch (error) { console.warn('Kart model unavailable; using the lightweight fallback.', error); }
+  if (disposed) return;
+  kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
   const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
-  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = makeKart(colors[index % colors.length]); object.scale.setScalar(SCALE * 0.9); scene.add(object); return object; });
+  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
   race = createRace({ length: routeMeters, rivals: config.rivals, difficulty: config.difficulty, events: config.events });
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6)); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2600);
-  const start = roadFrame(0); camera.position.copy(start.point).add(new THREE.Vector3(0, 2.5, -3.5)); camera.lookAt(start.point.clone().add(new THREE.Vector3(0, 1.45, 5.5)));
-  window.addEventListener('resize', resize); bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
+  const start = roadFrame(0); camera.position.copy(start.point).addScaledVector(start.tangent, -2.4).add(new THREE.Vector3(0, 1.85, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 4.8).add(new THREE.Vector3(0, 1.1, 0)); camera.lookAt(cameraTarget);
+  bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
   raf = requestAnimationFrame(tick);
 }
 function resize() { if (!renderer || !camera) return; camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
