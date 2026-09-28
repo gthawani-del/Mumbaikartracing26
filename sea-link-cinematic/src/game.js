@@ -35,6 +35,27 @@ function asphaltTexture() {
   return texture;
 }
 
+function seaTexture() {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#536d78'; context.fillRect(0, 0, 256, 256);
+  let seed = 42;
+  for (let i = 0; i < 950; i++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const x = (seed >>> 16) & 255;
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const y = (seed >>> 16) & 255;
+    context.fillStyle = i % 3 ? 'rgba(178,203,207,0.12)' : 'rgba(23,48,62,0.18)';
+    context.fillRect(x, y, 4 + (seed & 31), 1);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(24, 28);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 function roadFrame(distance) {
   const u = clamp(distance / routeLength, 0, 1);
   const point = curve.getPointAt(u);
@@ -136,8 +157,22 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
   const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
   materials.asphalt.map = asphalt ?? asphaltTexture(); materials.asphalt.roughness = 0.45; materials.asphalt.needsUpdate = true;
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ color: '#547b86', roughness: 0.3, metalness: 0.18 })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
+  const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ map: seaTexture(), roughness: 0.46, metalness: 0.16, side: THREE.DoubleSide })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
+  // Continuous shoulder lines follow the sampled OSM curve, including its bends.
+  const edgeVertices = [], edgeIndices = [];
+  for (let i = 0; i < samples.length; i++) {
+    const p = samples[i], t = curve.getTangentAt(i / (samples.length - 1));
+    const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
+    for (const side of [-1, 1]) for (const offset of [-0.035, 0.035]) {
+      edgeVertices.push(p.x + right.x * (ROAD_HALF - 0.28 + offset) * side, 0.185, p.z + right.z * (ROAD_HALF - 0.28 + offset) * side);
+    }
+    if (i < samples.length - 1) for (let side = 0; side < 2; side++) {
+      const a = i * 4 + side * 2; edgeIndices.push(a, a + 1, a + 4, a + 1, a + 5, a + 4);
+    }
+  }
+  const edgeGeo = new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgeVertices, 3)); edgeGeo.setIndex(edgeIndices); edgeGeo.computeVertexNormals();
+  const edges = new THREE.Mesh(edgeGeo, new THREE.MeshBasicMaterial({ color: '#e0ddd0', side: THREE.DoubleSide })); scene.add(edges);
   const barrierMaterial = mat(concrete ? '#eeeeee' : '#aeb6b7', 0.75);
   if (concrete) barrierMaterial.map = concrete;
   const barriers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.42, 1), barrierMaterial, 2 * 150);
@@ -159,9 +194,26 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
     }
   }
   railPosts.count = postIndex; railRuns.count = barriers.count = runIndex; scene.add(barriers, railPosts, railRuns);
+  const reflectors = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.09, 0.32), new THREE.MeshBasicMaterial({ color: '#ffd18a' }), 2 * 76);
+  let reflectorCount = 0;
+  for (let i = 0; i <= 150; i += 2) {
+    const frame = roadFrame(routeLength * i / 150);
+    for (const side of [-1, 1]) {
+      const pos = frame.point.clone().addScaledVector(frame.right, side * (ROAD_HALF - 0.03));
+      dummy.position.set(pos.x, 0.48, pos.z); dummy.rotation.set(0, frame.yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
+      reflectors.setMatrixAt(reflectorCount++, dummy.matrix);
+    }
+  }
+  reflectors.count = reflectorCount; scene.add(reflectors);
   // Dashed center line, edge reflectors and bridge lighting.
   const centerMarks = new THREE.InstancedMesh(new THREE.BoxGeometry(0.07, 0.035, 1.12), materials.marking, 600);
   const markerTransform = new THREE.Object3D(); let markerCount = 0;
+  const lampCount = 2 * 50;
+  const lampPole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.045, 0.07, 4.4, 7), materials.rail, lampCount);
+  const lampArm = new THREE.InstancedMesh(new THREE.BoxGeometry(1.8, 0.1, 0.12), materials.rail, lampCount);
+  const lampBulb = new THREE.InstancedMesh(new THREE.SphereGeometry(0.11, 8, 8), new THREE.MeshBasicMaterial({ color: '#ffe4b8' }), lampCount);
+  const glow = new THREE.InstancedMesh(new THREE.SphereGeometry(0.38, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffca83', transparent: true, opacity: 0.12, depthWrite: false }), lampCount);
+  let lightCount = 0;
   for (let i = 0; i < 600; i += 2) {
     const p = samples[i], t = curve.getTangentAt(i / 600), right = new THREE.Vector3(t.z, 0, -t.x).normalize();
     for (const side of [-1, 1]) {
@@ -169,13 +221,17 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
       markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.updateMatrix(); centerMarks.setMatrixAt(markerCount++, markerTransform.matrix);
     }
     if (i % 12 === 0) for (const side of [-1, 1]) {
-      const lamp = new THREE.Group(); const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.07, 4.4, 7), materials.rail); pole.position.y = 2.25; lamp.add(pole);
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.12), materials.rail); arm.position.set(-side * 0.9, 4.3, 0); lamp.add(arm);
-      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), new THREE.MeshBasicMaterial({ color: '#ffd7a0' })); bulb.position.set(-side * 0.9, 4.22, 0); lamp.add(bulb);
-      const offset = p.clone().addScaledVector(right, side * (ROAD_HALF + 0.55)); lamp.position.set(offset.x, 0, offset.z); lamp.rotation.y = Math.atan2(t.x, t.z); scene.add(lamp);
+      const base = p.clone().addScaledVector(right, side * (ROAD_HALF + 0.55));
+      const inward = base.clone().addScaledVector(right, -side * 0.9);
+      markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.scale.set(1, 1, 1);
+      markerTransform.position.set(base.x, 2.25, base.z); markerTransform.updateMatrix(); lampPole.setMatrixAt(lightCount, markerTransform.matrix);
+      markerTransform.position.set(inward.x, 4.3, inward.z); markerTransform.updateMatrix(); lampArm.setMatrixAt(lightCount, markerTransform.matrix);
+      markerTransform.position.y = 4.22; markerTransform.updateMatrix(); lampBulb.setMatrixAt(lightCount, markerTransform.matrix); glow.setMatrixAt(lightCount, markerTransform.matrix);
+      lightCount++;
     }
   }
-  centerMarks.count = markerCount; scene.add(centerMarks);
+  centerMarks.count = markerCount; lampPole.count = lampArm.count = lampBulb.count = glow.count = lightCount;
+  scene.add(centerMarks, lampPole, lampArm, lampBulb, glow);
   // Cable-stayed pylons and fine cables at four cinematic spans.
   for (const fraction of [0.035, 0.28, 0.72, 0.92]) {
     const frame = roadFrame(routeLength * fraction);
