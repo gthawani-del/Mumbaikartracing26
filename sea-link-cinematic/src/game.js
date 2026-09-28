@@ -8,7 +8,7 @@ const KART_SCALE = 0.43;
 const ROAD_HALF = 2;
 const held = new Set();
 const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'accelerate', KeyW: 'accelerate', Space: 'accelerate', ArrowDown: 'brake', KeyS: 'brake', ShiftLeft: 'drift', ShiftRight: 'drift', KeyE: 'boost' };
-let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
+let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], weather, reflections, minimap, raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
 let disposed = false, paused = false;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
@@ -67,6 +67,26 @@ function lampReflectionTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
+function sprayTexture() {
+  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  const glow = ctx.createRadialGradient(16, 16, 1, 16, 16, 15);
+  glow.addColorStop(0, 'rgba(255,255,255,.85)'); glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(canvas);
+}
+
+function roadSignTexture(title, subtitle) {
+  const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 192;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#155a49'; ctx.fillRect(0, 0, 1024, 192);
+  ctx.strokeStyle = '#e1eee7'; ctx.lineWidth = 11; ctx.strokeRect(10, 10, 1004, 172);
+  ctx.fillStyle = '#f3f9f5'; ctx.textAlign = 'center';
+  ctx.font = 'bold 66px sans-serif'; ctx.fillText(title, 512, 87);
+  ctx.font = '39px sans-serif'; ctx.fillText(subtitle, 512, 149);
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture;
+}
+
 function roadFrame(distance) {
   const u = clamp(distance / routeLength, 0, 1);
   const point = curve.getPointAt(u);
@@ -99,7 +119,7 @@ function makeKart(color = '#a63e35') {
   return group;
 }
 
-function modelKart(template, color) {
+function modelKart(template, color, number = 0) {
   const object = template.clone(true);
   const wheels = [];
   object.traverse((part) => {
@@ -111,8 +131,117 @@ function modelKart(template, color) {
     }
   });
   object.userData.wheels = wheels;
+  // These details remain separate from the imported hero mesh so the wheels still rotate.
+  for (const name of ['WheelRearL', 'WheelRearR']) object.getObjectByName(name)?.scale.setScalar(1.16);
+  const plate = document.createElement('canvas'); plate.width = 256; plate.height = 128;
+  const ctx = plate.getContext('2d'); ctx.fillStyle = '#dfa746'; ctx.fillRect(0, 0, 256, 128);
+  ctx.strokeStyle = '#392c28'; ctx.lineWidth = 9; ctx.strokeRect(5, 5, 246, 118);
+  ctx.fillStyle = '#201b1c'; ctx.textAlign = 'center'; ctx.font = 'bold 38px sans-serif'; ctx.fillText(number ? `RACER ${number}` : 'MUMBAI', 128, 55);
+  ctx.fillText(number ? 'SEA LINK' : 'RACER', 128, 101);
+  const plateMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.27), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(plate), side: THREE.DoubleSide }));
+  plateMesh.position.set(0, 0.56, -1.43); plateMesh.rotation.y = Math.PI; object.add(plateMesh);
+  const brakeLights = new THREE.MeshBasicMaterial({ color: color ?? '#ff3828' });
+  for (const side of [-1, 1]) {
+    const light = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), brakeLights);
+    light.position.set(side * 0.59, 0.51, -1.31); object.add(light);
+  }
   object.scale.setScalar(KART_SCALE);
   return object;
+}
+
+function makeMinimap() {
+  const points = curve.getSpacedPoints(90);
+  const xs = points.map((p) => p.x), zs = points.map((p) => p.z);
+  const minX = Math.min(...xs), minZ = Math.min(...zs);
+  const spanX = Math.max(...xs) - minX || 1, spanZ = Math.max(...zs) - minZ || 1;
+  const scale = Math.min(70 / spanX, 100 / spanZ);
+  const x0 = (100 - spanX * scale) / 2, z0 = (120 - spanZ * scale) / 2;
+  const mapPoint = (distance) => { const p = curve.getPointAt(clamp(distance / race.length, 0, 1)); return [x0 + (p.x - minX) * scale, z0 + (p.z - minZ) * scale]; };
+  const path = points.map((p, i) => `${i ? 'L' : 'M'}${(x0 + (p.x - minX) * scale).toFixed(1)} ${(z0 + (p.z - minZ) * scale).toFixed(1)}`).join(' ');
+  const svg = $('#race-minimap');
+  svg.innerHTML = `<path d="${path}" fill="none" stroke="#182129" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><path d="${path}" fill="none" stroke="#e9f4f7" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle id="map-player" r="5" fill="#ffbc48" stroke="white" stroke-width="1.5"/>${race.rivals.map((_, i) => `<circle id="map-rival-${i}" r="3" fill="#f37081" stroke="#fff" stroke-width=".6"/>`).join('')}<circle cx="${mapPoint(race.length)[0]}" cy="${mapPoint(race.length)[1]}" r="4" fill="#fff"/>`;
+  return { mapPoint, player: $('#map-player'), rivals: race.rivals.map((_, i) => $(`#map-rival-${i}`)) };
+}
+
+function makeWeather() {
+  // Two draw calls, reused buffers: camera-local rain and world-space tyre spray.
+  const rainPositions = new Float32Array(110 * 6);
+  const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3).setUsage(THREE.DynamicDrawUsage));
+  const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: '#cbd8e2', transparent: true, opacity: 0.22, depthWrite: false, fog: false }));
+  rain.frustumCulled = false; camera.add(rain); scene.add(camera);
+  const drops = Array.from({ length: 110 }, () => ({ x: (Math.random() - 0.5) * 14, y: (Math.random() - 0.5) * 8, z: -2 - Math.random() * 13 }));
+  const sprayPositions = new Float32Array(80 * 3);
+  for (let i = 0; i < 80; i++) sprayPositions[i * 3 + 1] = -100;
+  const sprayGeo = new THREE.BufferGeometry(); sprayGeo.setAttribute('position', new THREE.BufferAttribute(sprayPositions, 3).setUsage(THREE.DynamicDrawUsage));
+  const spray = new THREE.Points(sprayGeo, new THREE.PointsMaterial({ map: sprayTexture(), color: '#d2dfe5', size: 0.12, transparent: true, opacity: 0.7, depthWrite: false, sizeAttenuation: true }));
+  spray.frustumCulled = false; scene.add(spray);
+  return { rain, rainGeo, rainPositions, drops, spray, sprayGeo, sprayPositions, particles: [], cursor: 0 };
+}
+
+function makeRoadReflections() {
+  const sheen = lampReflectionTexture();
+  const ribbons = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.55, 4.8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: sheen, color: '#a9bfd1', transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), 420);
+  const marker = new THREE.Object3D();
+  for (let i = 0; i < 420; i++) {
+    const frame = roadFrame(routeLength * ((i + 0.5) / 420));
+    const side = ((Math.imul(i + 11, 1664525) >>> 8) % 1000 / 1000 - 0.5) * 3;
+    marker.position.copy(frame.point).addScaledVector(frame.right, side);
+    marker.position.y = 0.195;
+    marker.rotation.set(0, frame.yaw, 0);
+    marker.scale.set(0.45 + (i % 5) * 0.2, 0.5 + (i % 4) * 0.25, 1); marker.updateMatrix();
+    ribbons.setMatrixAt(i, marker.matrix);
+  }
+  scene.add(ribbons);
+  const texture = lampReflectionTexture();
+  const colors = ['#f23c35', '#41a2ff', '#ffb238', '#48d29c', '#cc7bed', '#f85e71', '#44cbd6', '#ee5ca6'];
+  const racers = [race.player, ...race.rivals].flatMap((_, i) => [-1, 1].map((side) => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 3.2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: texture, color: colors[i], transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    mesh.userData = { racerIndex: i, side }; scene.add(mesh); return mesh;
+  }));
+  return racers;
+}
+
+function updateReflections() {
+  reflections.forEach((mesh) => {
+    const i = mesh.userData.racerIndex;
+    const racer = i ? race.rivals[i - 1] : race.player;
+    const frame = roadFrame(routeLength * racer.distance / race.length);
+    mesh.position.copy(frame.point).addScaledVector(frame.right, racer.lane * SCALE + mesh.userData.side * 0.22).addScaledVector(frame.tangent, -0.75);
+    mesh.position.y = 0.204;
+    mesh.rotation.y = frame.yaw;
+    mesh.material.opacity = Math.min(0.48, 0.16 + racer.speed / 120);
+  });
+}
+
+function updateWeather(dt) {
+  if (!weather) return;
+  weather.drops.forEach((drop, i) => {
+    drop.y -= dt * 12; drop.x -= dt * 2;
+    if (drop.y < -4.5 || drop.x < -7) { drop.y = 4.5; drop.x = (Math.random() - 0.5) * 14; }
+    const offset = i * 6, buffer = weather.rainPositions;
+    buffer[offset] = drop.x; buffer[offset + 1] = drop.y; buffer[offset + 2] = drop.z;
+    buffer[offset + 3] = drop.x + 0.09; buffer[offset + 4] = drop.y + 0.34; buffer[offset + 5] = drop.z;
+  });
+  weather.rainGeo.attributes.position.needsUpdate = true;
+  const frame = roadFrame(routeLength * race.player.distance / race.length);
+  if (race.player.speed > 10) for (const side of [-1, 1]) {
+    const particle = weather.particles[weather.cursor] ?? {};
+    particle.position = kart.position.clone().addScaledVector(frame.right, side * 0.36).addScaledVector(frame.tangent, -0.33);
+    particle.position.y = 0.27;
+    particle.velocity = frame.tangent.clone().multiplyScalar(-0.7 - Math.random() * 1.2).addScaledVector(frame.right, side * (0.3 + Math.random()));
+    particle.velocity.y = 0.35 + Math.random() * 0.55; particle.life = 0.28 + Math.random() * 0.24;
+    weather.particles[weather.cursor] = particle; weather.cursor = (weather.cursor + 1) % 80;
+  }
+  weather.particles.forEach((particle, i) => {
+    if (particle.life > 0) {
+      particle.life -= dt; particle.position.addScaledVector(particle.velocity, dt);
+      particle.velocity.y -= 2.2 * dt;
+    }
+    const offset = i * 3, buffer = weather.sprayPositions;
+    if (particle.life > 0) { buffer[offset] = particle.position.x; buffer[offset + 1] = Math.max(0.2, particle.position.y); buffer[offset + 2] = particle.position.z; }
+    else { buffer[offset] = 0; buffer[offset + 1] = -100; buffer[offset + 2] = 0; }
+  });
+  weather.sprayGeo.attributes.position.needsUpdate = true;
 }
 
 async function surfaceTexture(name) {
@@ -156,14 +285,16 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.25);
   const samples = curve.getSpacedPoints(600);
   routeLength = curve.getLength();
+  const roadSamples = [samples[0].clone().addScaledVector(curve.getTangentAt(0), -8), ...samples, samples.at(-1).clone().addScaledVector(curve.getTangentAt(1), 8)];
+  const roadTangent = (i) => curve.getTangentAt(clamp((i - 1) / 600, 0, 1));
   const vertices = [], uvs = [], indices = [];
-  for (let i = 0; i < samples.length; i++) {
-    const p = samples[i], t = curve.getTangentAt(i / (samples.length - 1)); const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
+  for (let i = 0; i < roadSamples.length; i++) {
+    const p = roadSamples[i], t = roadTangent(i); const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
     for (const side of [-1, 1]) {
       vertices.push(p.x + right.x * ROAD_HALF * side, 0.16, p.z + right.z * ROAD_HALF * side);
-      uvs.push((side + 1) / 2, i / (samples.length - 1) * routeLength / 4);
+      uvs.push((side + 1) / 2, (i - 1) / 600 * routeLength / 4);
     }
-    if (i < samples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    if (i < roadSamples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
   }
   const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
   materials.asphalt.map = asphalt ?? asphaltTexture();
@@ -175,13 +306,13 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
   // Continuous shoulder lines follow the sampled OSM curve, including its bends.
   const edgeVertices = [], edgeIndices = [];
-  for (let i = 0; i < samples.length; i++) {
-    const p = samples[i], t = curve.getTangentAt(i / (samples.length - 1));
+  for (let i = 0; i < roadSamples.length; i++) {
+    const p = roadSamples[i], t = roadTangent(i);
     const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
     for (const side of [-1, 1]) for (const offset of [-0.035, 0.035]) {
       edgeVertices.push(p.x + right.x * (ROAD_HALF - 0.28 + offset) * side, 0.185, p.z + right.z * (ROAD_HALF - 0.28 + offset) * side);
     }
-    if (i < samples.length - 1) for (let side = 0; side < 2; side++) {
+    if (i < roadSamples.length - 1) for (let side = 0; side < 2; side++) {
       const a = i * 4 + side * 2; edgeIndices.push(a, a + 1, a + 4, a + 1, a + 5, a + 4);
     }
   }
@@ -248,6 +379,18 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   }
   centerMarks.count = markerCount; lampPole.count = lampArm.count = lampBulb.count = glow.count = reflections.count = lightCount;
   scene.add(centerMarks, lampPole, lampArm, lampBulb, glow, reflections);
+  // Route signs sit near the bridge approaches, where overhead guidance belongs.
+  for (const [fraction, title, subtitle] of [[0.11, 'BANDRA - WORLI SEA LINK', 'WORLI  ↑'], [0.86, 'WORLI APPROACH', 'KEEP TO YOUR LANE  ↑']]) {
+    const frame = roadFrame(routeLength * fraction);
+    const gantry = new THREE.Group(); gantry.position.copy(frame.point); gantry.rotation.y = frame.yaw;
+    for (const side of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.65, 0.12), materials.rail);
+      post.position.set(side * (ROAD_HALF + 0.62), 1.9, 0); gantry.add(post);
+    }
+    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.12, 0.12), materials.rail); crossbar.position.y = 3.75; gantry.add(crossbar);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.45, 0.84), new THREE.MeshBasicMaterial({ map: roadSignTexture(title, subtitle), side: THREE.DoubleSide }));
+    sign.position.set(0, 3.37, 0.09); gantry.add(sign); scene.add(gantry);
+  }
   // Cable-stayed pylons and fine cables at four cinematic spans.
   for (const fraction of [0.035, 0.28, 0.72, 0.92]) {
     const frame = roadFrame(routeLength * fraction);
@@ -327,8 +470,11 @@ function renderHud(now) {
   $('#hud-field').textContent = `/ ${race.rivals.length + 1}`;
   $('#hud-time').textContent = `${String(Math.floor(race.elapsed / 60)).padStart(2, '0')}:${(race.elapsed % 60).toFixed(1).padStart(4, '0')}`;
   $('#hud-progress').style.width = `${(progress * 100).toFixed(1)}%`;
-  $('#hud-sector').textContent = progress < 0.34 ? 'BANDRA · START' : progress < 0.67 ? 'MAHIM BAY · SECTOR 2' : 'WORLI · FINAL SECTOR';
+  $('#hud-sector').textContent = `SECTOR ${Math.min(3, Math.floor(progress * 3) + 1)} / 3`;
   $('#hud-boost').style.width = `${Math.round(p.charge * 100)}%`;
+  const [x, y] = minimap.mapPoint(p.distance);
+  minimap.player.setAttribute('cx', x); minimap.player.setAttribute('cy', y);
+  race.rivals.forEach((rival, i) => { const [rx, ry] = minimap.mapPoint(rival.distance); minimap.rivals[i].setAttribute('cx', rx); minimap.rivals[i].setAttribute('cy', ry); });
 }
 function stepPosition() { return racePosition(race); }
 
@@ -339,6 +485,7 @@ function tick(now) {
   const result = advanceRace(race, controls(), dt);
   updateKart(kart, race.player.distance, race.player.lane, dt, true);
   race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
+  updateReflections(); updateWeather(dt);
   const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.2).addScaledVector(frame.right, race.player.lane * SCALE * 0.35); look.y += 0.9;
   const tallPhone = camera.aspect < 0.52;
   const desired = frame.point.clone().addScaledVector(frame.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0));
@@ -389,7 +536,7 @@ function dispose() {
   disposed = true; cancelAnimationFrame(raf); held.clear();
   if (renderer) { renderer.dispose(); renderer.domElement.remove(); }
   scene?.traverse((object) => { object.geometry?.dispose?.(); if (Array.isArray(object.material)) object.material.forEach((m) => m.dispose?.()); else object.material?.dispose?.(); });
-  renderer = scene = camera = cameraTarget = null;
+  renderer = scene = camera = cameraTarget = weather = reflections = minimap = null;
 }
 
 async function start(config) {
@@ -416,12 +563,14 @@ async function start(config) {
   makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate, asphalt, concrete, config.timeOfDay);
   kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
   const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
-  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
+  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length], index + 1) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
   race = createRace({ length: routeMeters, rivals: config.rivals, difficulty: config.difficulty, events: config.events });
+  minimap = makeMinimap(); reflections = makeRoadReflections();
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6)); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
+  weather = makeWeather();
   const start = roadFrame(0); const tallPhone = camera.aspect < 0.52;
   camera.position.copy(start.point).addScaledVector(start.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
   bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
