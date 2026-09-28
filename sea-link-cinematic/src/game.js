@@ -18,6 +18,7 @@ let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters
 let disposed = false, paused = false;
 let simulation, ocean, boostEffects, intro, visualTime = 0;
 let engineAudio = null;
+let contactSparks;
 let soundMuted = false;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
@@ -563,6 +564,56 @@ function updateEngineAudio(playerFrame, input) {
   gain.gain.setTargetAtTime(active ? 0.025 + throttle * 0.025 : 0, now, 0.025);
 }
 
+// Reused world-space spark pool; no per-frame mesh allocation.
+function createContactSparks() {
+  const count = 48, positions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) positions[i * 3 + 1] = -100;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const material = new THREE.PointsMaterial({ color: '#ffbd61', size: .055, transparent: true,
+    opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false });
+  const points = new THREE.Points(geometry, material); points.frustumCulled = false;
+  scene.add(points);
+  contactSparks = { points, positions, particles: Array.from({ length: count }, () => ({ life: 0, vx: 0, vy: 0, vz: 0 })), cursor: 0 };
+}
+
+function emitContact(event) {
+  if (event.speed < 2) return;
+  const frame = roadFrame(routeLength * event.distance / race.length);
+  const point = frame.point.clone().addScaledVector(frame.right, event.lane * SCALE);
+  const count = Math.min(12, Math.ceil(event.speed));
+  for (let n = 0; n < count; n++) {
+    const i = contactSparks.cursor++ % contactSparks.particles.length, p = contactSparks.particles[i];
+    p.life = .12 + Math.random() * .16;
+    p.vx = (Math.random() - .5) * 2; p.vy = .6 + Math.random(); p.vz = (Math.random() - .5) * 2;
+    contactSparks.positions.set([point.x, .35, point.z], i * 3);
+  }
+}
+
+function updateContactSparks(dt) {
+  const { particles, positions, points } = contactSparks;
+  particles.forEach((p, i) => {
+    p.life -= dt;
+    if (p.life <= 0) { positions[i * 3 + 1] = -100; return; }
+    p.vy -= 5 * dt;
+    positions[i * 3] += p.vx * dt; positions[i * 3 + 1] += p.vy * dt; positions[i * 3 + 2] += p.vz * dt;
+  });
+  points.geometry.attributes.position.needsUpdate = true;
+}
+
+function playContactSound(speed) {
+  if (!engineAudio || soundMuted || paused || document.hidden) return;
+  const { context } = engineAudio, now = context.currentTime;
+  const voice = context.createOscillator(), gain = context.createGain();
+  voice.type = 'triangle'; voice.frequency.setValueAtTime(160, now);
+  voice.frequency.exponentialRampToValueAtTime(45, now + .12);
+  gain.gain.setValueAtTime(Math.min(1.5, .4 + speed * .04), now);
+  gain.gain.exponentialRampToValueAtTime(.001, now + .14);
+  voice.connect(gain); gain.connect(engineAudio.gain);
+  voice.start(); voice.stop(now + .15);
+  voice.onended = () => { voice.disconnect(); gain.disconnect(); };
+}
+
 function silenceEngineAudio() {
   if (!engineAudio) return;
   const { context, gain } = engineAudio;
@@ -580,7 +631,7 @@ function disposeEngineAudio() {
 
 function controls() {
   const input = Object.fromEntries(['left', 'right', 'accelerate', 'brake', 'drift', 'boost'].map((key) => [key, held.has(key)]));
-  input.accelerate ||= input.boost;
+  input.accelerate ||= input.boost || input.drift;
   return input;
 }
 
@@ -685,19 +736,29 @@ function tick(now) {
   updateReflections(); updateWeather(dt);
   updateBoostEffects(boostEffects, race.player.boosting && !race.finished, dt,
     roadFrame(routeLength * result.frame.player.distance / race.length), kart, weather.state.wetness);
+  let strongestImpact = 0;
+  for (const event of result.events) if (event.type === 'impact') {
+    emitContact(event);
+    if (event.a === 0 || event.b === 0) strongestImpact = Math.max(strongestImpact, event.speed);
+  }
+  if (strongestImpact > 0) {
+    shake = Math.max(shake, Math.min(.14, strongestImpact * .004));
+    playContactSound(strongestImpact);
+  }
+  if (result.events.some(event => event.type === 'barrier')) shake = Math.max(shake, .025);
+  updateContactSparks(dt);
   // Late camera phase follows the exact same interpolated state as the models.
   updateCamera(result.frame.player, dt);
   renderer.render(scene, camera); renderHud(now);
-  if (result.collision) shake = Math.max(shake, 0.25 + race.player.speed * 0.006);
   for (const event of result.events) {
-    showEvent(event.text);
+    if (event.type !== 'impact') showEvent(event.text);
     if (event.type === 'finish') finishRace();
   }
 }
 
 function finishRace() {
   silenceEngineAudio();
-  held.clear();
+  clearControls();
   const position = stepPosition(); $('#finish-title').textContent = position === 1 ? 'You won the Sea Link.' : `You finished ${position}${position === 2 ? 'nd' : position === 3 ? 'rd' : 'th'}.`;
   $('#finish-copy').textContent = `Bandra to Worli · ${race.elapsed.toFixed(1)} seconds · ${race.rivals.length + 1} racers`;
   $('#finish-overlay').hidden = false;
@@ -792,7 +853,7 @@ async function start(config, retry = false) {
   pmrem.dispose();
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
-  weather = makeWeather(); boostEffects = createBoostEffects(kart, scene);
+  weather = makeWeather(); createContactSparks(); boostEffects = createBoostEffects(kart, scene);
   const start = roadFrame(0); const tallPhone = camera.aspect < 0.52;
   camera.position.copy(start.point).addScaledVector(start.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
   $('#race-intro').hidden = false; $('#game-view').classList.add('in-intro');

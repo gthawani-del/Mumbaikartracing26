@@ -63,3 +63,13 @@
 @media(max-height:500px){.drive-pad{grid-template-rows:64px 64px}.drive-pad [data-control=accelerate]{height:64px}.steer-pad{height:88px}.steer-pad button{height:88px}.steer-pad .wheel-art{width:88px;height:88px}}
 
 .race-intro{position:absolute;inset:25% 0 auto;display:flex;flex-direction:column;align-items:center;gap:22px;pointer-events:none;text-shadow:0 3px 18px #000}.race-intro[hidden]{display:none}.race-intro strong{font-size:clamp(24px,5vw,48px);letter-spacing:.08em;color:#fff;text-align:center}.race-intro button{pointer-events:auto;padding:11px 22px;border:1px solid #fff8;border-radius:24px;background:#172733c9;color:white;font-weight:700}.in-intro .mobile-controls,.in-intro .speed-card,.in-intro .boost-card{visibility:hidden}
+
+/* Two-thumb layout: compact numeric speed, consistent reachable hit targets. */
+.steer-pad{width:132px;height:88px}.steer-pad button{width:66px;height:88px}.steer-pad .wheel-art{width:88px;height:88px}
+.drive-pad{grid-template-columns:52px 60px;grid-template-rows:60px 76px;gap:12px}
+.drive-pad [data-control=accelerate]{height:76px;width:60px}
+.drive-pad [data-control=brake],.drive-pad [data-control=drift]{height:52px;width:52px}
+.drive-pad [data-control=boost]{height:60px;width:60px}
+.hud-bottom .speed-card{right:max(12px,env(safe-area-inset-right));bottom:calc(180px + env(safe-area-inset-bottom))}
+.speed-dial{width:76px;height:44px;flex-direction:row;gap:5px;border:1px solid #bedaff55;border-radius:12px;background:#112030c9;transform:none;box-shadow:0 3px 12px #0004}
+.speed-dial>*{transform:none}.speed-dial strong{font-size:26px;letter-spacing:-.04em}.speed-dial small{font-size:8px;letter-spacing:0}

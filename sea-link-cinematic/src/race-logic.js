@@ -1,3 +1,4 @@
+import { resolveKartContacts } from './kart-contact.js';
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // Speeds are metres per second; HUD converts to km/h.
 export const MAX_SPEED = 180 / 3.6;
@@ -18,17 +19,18 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
   ];
   return {
     length,
+    contacts: new Set(),
     elapsed: 0,
     finished: false,
     eventsEnabled: new Set(events),
     eventState: { windFired: false, gateFired: false, windTime: 0, windSide: 1 },
     sectors: [null, null],
-    player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, boosting: false, manualBoosting: false, boostExhausted: false, charge: 0.65, boostTime: 0, impacts: 0, finishTime: null },
+    player: { gripTime: 0, distance: 0, lane: 0, lateralSpeed: 0, speed: 0, boosting: false, manualBoosting: false, boostExhausted: false, charge: 0.65, boostTime: 0, impacts: 0, finishTime: null },
     rivals: Array.from({ length: rivals }, (_, index) => ({
       distance: grid[index]?.distance ?? 48 + (index - grid.length + 1) * 9,
       lane: grid[index]?.lane ?? (index % 2 ? 4.2 : -4.2),
       baseLane: grid[index]?.lane ?? (index % 2 ? 4.2 : -4.2),
-      speed: 0,
+      speed: 0, lateralSpeed: 0, gripTime: 0,
       pace: pace + (index - (rivals - 1) / 2) * 0.55,
       finished: false,
       finishTime: null,
@@ -42,6 +44,9 @@ export function stepRace(race, input, elapsed) {
   const player = race.player;
   const previousDistance = player.distance;
   const previousLane = player.lane;
+  const karts = [player, ...race.rivals];
+  const previous = karts.map(k => ({ distance: k.distance, lane: k.lane }));
+  for (const k of karts) k.gripTime = Math.max(0, k.gripTime - dt);
   const messages = [];
   race.elapsed += dt;
 
@@ -61,7 +66,7 @@ export function stepRace(race, input, elapsed) {
   const topSpeed = boosting ? BOOST_MAX_SPEED : MAX_SPEED;
 
   if (input.brake) player.speed = Math.max(0, player.speed - 42 * dt);
-  else if (input.accelerate || input.boost || gateBoost) player.speed = player.speed > topSpeed
+  else if (input.accelerate || input.boost || input.drift || gateBoost) player.speed = player.speed > topSpeed
     ? Math.max(topSpeed, player.speed - 12 * dt)
     : Math.min(topSpeed, player.speed + (boosting ? 32 : 23) * dt);
   else player.speed = Math.max(0, player.speed - 3.2 * dt);
@@ -71,7 +76,7 @@ export function stepRace(race, input, elapsed) {
   player.boostTime = Math.max(0, player.boostTime - dt);
 
   const targetLateralSpeed = steer * (drifting ? 5.2 : 4.3) * clamp(player.speed / 16, 0, 1);
-  player.lateralSpeed += (targetLateralSpeed - player.lateralSpeed) * Math.min(1, (drifting ? 6 : 11) * dt);
+  player.lateralSpeed += (targetLateralSpeed - player.lateralSpeed) * Math.min(1, (player.gripTime > 0 ? 3 : drifting ? 6 : 11) * dt);
   if (race.eventState.windTime > 0) {
     race.eventState.windTime = Math.max(0, race.eventState.windTime - dt);
     player.lateralSpeed += race.eventState.windSide * 3.2 * dt;
@@ -116,30 +121,36 @@ export function stepRace(race, input, elapsed) {
 
   for (const rival of race.rivals) {
     if (rival.finished) continue;
-    const prior = rival.distance;
-    rival.speed = Math.min(rival.pace, rival.speed + 21 * dt);
-    rival.distance = Math.min(race.length, rival.distance + rival.speed * dt);
-    rival.lane = rival.baseLane + Math.sin(race.elapsed * 0.5 + prior * 0.04) * 0.14;
-    rival.finished = rival.distance >= race.length;
-    if (rival.finished) rival.finishTime = race.elapsed - dt + (race.length - prior) / rival.speed;
-    // Sweep relative separation across the step, so fast overtakes cannot tunnel.
-    const from = previousDistance - prior;
-    const to = player.distance - rival.distance;
-    const closest = Math.abs(to - from) > 1e-8 ? clamp(-from / (to - from), 0, 1) : 1;
-    const gap = from + (to - from) * closest;
-    const laneAtContact = previousLane + (player.lane - previousLane) * closest;
-    if (Math.abs(gap) < 3.2 && Math.abs(rival.lane - laneAtContact) < 1.35) {
-      player.speed = Math.max(0, player.speed - 7 * dt);
-      player.lateralSpeed += Math.sign(player.lane - rival.lane || 1) * 0.5;
-      collision = true;
-      messages.push({ type: 'rival', text: 'Kart contact — keep racing.' });
+    rival.speed = rival.speed > rival.pace ? Math.max(rival.pace, rival.speed - 12 * dt) : Math.min(rival.pace, rival.speed + 21 * dt);
+    rival.distance += rival.speed * dt;
+    const target = rival.baseLane + Math.sin(race.elapsed * .5 + rival.distance * .04) * .14;
+    const desired = clamp((target - rival.lane) * 2, -2.5, 2.5);
+    rival.lateralSpeed += (desired - rival.lateralSpeed) * Math.min(1, (rival.gripTime > 0 ? 2 : 5) * dt);
+    rival.lane += rival.lateralSpeed * dt;
+    if (Math.abs(rival.lane) > LANE_LIMIT_METERS) {
+      rival.lane = clamp(rival.lane, -LANE_LIMIT_METERS, LANE_LIMIT_METERS);
+      rival.lateralSpeed *= -.25;
     }
   }
+  const impacts = resolveKartContacts(karts, previous, race.contacts);
+  for (const kart of karts) kart.speed = Math.min(BOOST_MAX_SPEED, kart.speed);
+  for (const impact of impacts) {
+    if (impact.a === 0 || impact.b === 0) { collision = true; player.impacts++; }
+    messages.push({ type: 'impact', text: 'Kart contact — keep racing.', ...impact });
+  }
+  race.rivals.forEach((rival, index) => {
+    if (!rival.finished && rival.distance >= race.length) {
+      rival.finished = true;
+      rival.finishTime = race.elapsed - dt + clamp((race.length - previous[index + 1].distance) / Math.max(.001, rival.speed), 0, dt);
+      rival.distance = race.length;
+    }
+  });
 
   if (player.distance >= race.length) {
+    player.distance = race.length;
     race.finished = true;
     player.boosting = false;
-    player.finishTime = race.elapsed - dt + (race.length - previousDistance) / player.speed;
+    player.finishTime = race.elapsed - dt + clamp((race.length - previousDistance) / Math.max(.001, player.speed), 0, dt);
     if (race.sectors[1] === null) race.sectors[1] = race.elapsed;
     messages.push({ type: 'finish', text: 'Finish!' });
   }

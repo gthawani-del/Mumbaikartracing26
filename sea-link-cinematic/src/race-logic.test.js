@@ -95,7 +95,7 @@ test('a fast step crossing a rival still registers contact', () => {
   race.player.speed = 400;
   const result = stepRace(race, {}, 0.05);
   assert.ok(result.collision);
-  assert.ok(result.events.some(e => e.type === 'rival'));
+  assert.ok(result.events.some(e => e.type === 'impact'));
 });
 
 test('boost alone accelerates, depleted boost cannot pulse, release rearms it', () => {
@@ -136,4 +136,14 @@ test('boost speed stays capped across frame rates and repeated activations', () 
       assert.ok(race.player.charge >= 0 && race.player.charge <= 1);
     }
   }
+});
+
+
+test('drift provides throttle with steering, and brake still wins', () => {
+  const race = createRace({ length: 10000, rivals: 0 });
+  for (let i = 0; i < 30; i++) stepRace(race, { drift: true, left: true }, 1 / 60);
+  assert.ok(race.player.speed > 0); assert.ok(race.player.lane < 0);
+  const speed = race.player.speed;
+  stepRace(race, { drift: true, brake: true }, 1 / 60);
+  assert.ok(race.player.speed < speed);
 });
