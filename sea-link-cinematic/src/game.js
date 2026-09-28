@@ -40,12 +40,12 @@ function seaTexture() {
   const context = canvas.getContext('2d');
   context.fillStyle = '#536d78'; context.fillRect(0, 0, 256, 256);
   let seed = 42;
-  for (let i = 0; i < 950; i++) {
+  for (let i = 0; i < 520; i++) {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     const x = (seed >>> 16) & 255;
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     const y = (seed >>> 16) & 255;
-    context.fillStyle = i % 3 ? 'rgba(178,203,207,0.12)' : 'rgba(23,48,62,0.18)';
+    context.fillStyle = i % 3 ? 'rgba(178,203,207,0.055)' : 'rgba(23,48,62,0.09)';
     context.fillRect(x, y, 4 + (seed & 31), 1);
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -54,6 +54,17 @@ function seaTexture() {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
   return texture;
+}
+
+function lampReflectionTexture() {
+  const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 128;
+  const context = canvas.getContext('2d');
+  const glow = context.createRadialGradient(32, 64, 2, 32, 64, 60);
+  glow.addColorStop(0, 'rgba(255,214,153,0.9)');
+  glow.addColorStop(0.28, 'rgba(255,175,105,0.34)');
+  glow.addColorStop(1, 'rgba(255,175,105,0)');
+  context.fillStyle = glow; context.fillRect(0, 0, 64, 128);
+  return new THREE.CanvasTexture(canvas);
 }
 
 function roadFrame(distance) {
@@ -92,7 +103,7 @@ function modelKart(template, color) {
   const object = template.clone(true);
   const wheels = [];
   object.traverse((part) => {
-    if (part.name.startsWith('Wheel')) wheels.push(part);
+    if (/^Wheel(?:Front|Rear)[LR]$/.test(part.name)) wheels.push(part);
     if (!part.isMesh || !color) return;
     if (part.material.name === 'Crimson paint' || part.material.name === 'Fairing highlight') {
       part.material = part.material.clone();
@@ -139,7 +150,7 @@ function textureModels(kartTemplate, pylonTemplate, fabric, concrete) {
   });
 }
 
-function addWorld(data, pylonTemplate, asphalt, concrete) {
+function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   const [lon0, lat0] = data.route[0]; const cos = Math.cos(lat0 * Math.PI / 180);
   const pts = data.route.map(([lon, lat]) => new THREE.Vector3((lon - lon0) * 111320 * cos * SCALE, 0, (lat0 - lat) * 111320 * SCALE));
   curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.25);
@@ -155,7 +166,10 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
     if (i < samples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
   }
   const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
-  materials.asphalt.map = asphalt ?? asphaltTexture(); materials.asphalt.roughness = 0.45; materials.asphalt.needsUpdate = true;
+  materials.asphalt.map = asphalt ?? asphaltTexture();
+  materials.asphalt.color.set(timeOfDay === 'Day' ? '#bdc1c2' : '#a7adb0');
+  materials.asphalt.roughness = timeOfDay === 'Day' ? 0.38 : 0.24;
+  materials.asphalt.metalness = 0.13; materials.asphalt.needsUpdate = true;
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ map: seaTexture(), roughness: 0.46, metalness: 0.16, side: THREE.DoubleSide })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
@@ -213,6 +227,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
   const lampArm = new THREE.InstancedMesh(new THREE.BoxGeometry(1.8, 0.1, 0.12), materials.rail, lampCount);
   const lampBulb = new THREE.InstancedMesh(new THREE.SphereGeometry(0.11, 8, 8), new THREE.MeshBasicMaterial({ color: '#ffe4b8' }), lampCount);
   const glow = new THREE.InstancedMesh(new THREE.SphereGeometry(0.38, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffca83', transparent: true, opacity: 0.12, depthWrite: false }), lampCount);
+  const reflections = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.15, 5.2).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: lampReflectionTexture(), transparent: true, opacity: timeOfDay === 'Night' ? 0.9 : timeOfDay === 'Sunset' ? 0.75 : 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), lampCount);
   let lightCount = 0;
   for (let i = 0; i < 600; i += 2) {
     const p = samples[i], t = curve.getTangentAt(i / 600), right = new THREE.Vector3(t.z, 0, -t.x).normalize();
@@ -227,11 +242,12 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
       markerTransform.position.set(base.x, 2.25, base.z); markerTransform.updateMatrix(); lampPole.setMatrixAt(lightCount, markerTransform.matrix);
       markerTransform.position.set(inward.x, 4.3, inward.z); markerTransform.updateMatrix(); lampArm.setMatrixAt(lightCount, markerTransform.matrix);
       markerTransform.position.y = 4.22; markerTransform.updateMatrix(); lampBulb.setMatrixAt(lightCount, markerTransform.matrix); glow.setMatrixAt(lightCount, markerTransform.matrix);
+      markerTransform.position.y = 0.198; markerTransform.updateMatrix(); reflections.setMatrixAt(lightCount, markerTransform.matrix);
       lightCount++;
     }
   }
-  centerMarks.count = markerCount; lampPole.count = lampArm.count = lampBulb.count = glow.count = lightCount;
-  scene.add(centerMarks, lampPole, lampArm, lampBulb, glow);
+  centerMarks.count = markerCount; lampPole.count = lampArm.count = lampBulb.count = glow.count = reflections.count = lightCount;
+  scene.add(centerMarks, lampPole, lampArm, lampBulb, glow, reflections);
   // Cable-stayed pylons and fine cables at four cinematic spans.
   for (const fraction of [0.035, 0.28, 0.72, 0.92]) {
     const frame = roadFrame(routeLength * fraction);
@@ -324,7 +340,8 @@ function tick(now) {
   updateKart(kart, race.player.distance, race.player.lane, dt, true);
   race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
   const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.2).addScaledVector(frame.right, race.player.lane * SCALE * 0.35); look.y += 0.9;
-  const desired = frame.point.clone().addScaledVector(frame.tangent, -2.55).add(new THREE.Vector3(0, 1.65, 0));
+  const tallPhone = camera.aspect < 0.52;
+  const desired = frame.point.clone().addScaledVector(frame.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0));
   desired.addScaledVector(frame.right, race.player.lane * SCALE * 0.65);
   if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
   const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
@@ -396,7 +413,7 @@ async function start(config) {
   }, 0);
   textureModels(kartTemplate, pylonTemplate, fabric, concrete);
   if (fabric) { materials.shirt.map = fabric; materials.shirt.color.set('#e5e5e5'); materials.shirt.needsUpdate = true; }
-  makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate, asphalt, concrete);
+  makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate, asphalt, concrete, config.timeOfDay);
   kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
   const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
   rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
@@ -405,7 +422,8 @@ async function start(config) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6)); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
-  const start = roadFrame(0); camera.position.copy(start.point).addScaledVector(start.tangent, -2.55).add(new THREE.Vector3(0, 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
+  const start = roadFrame(0); const tallPhone = camera.aspect < 0.52;
+  camera.position.copy(start.point).addScaledVector(start.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
   bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
   raf = requestAnimationFrame(tick);
 }
