@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createSkyTexture, createWetSurfaceMaps } from './environment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createRace, advanceRace, racePosition, clamp } from './race-logic.js';
 
@@ -166,6 +167,10 @@ function makeWeather() {
 }
 
 function makeRoadReflections() {
+  const contact = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.0, 1.4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: sprayTexture(), color: '#000000', transparent: true, opacity: 0.7, depthWrite: false }), race.rivals.length + 1);
+  contact.instanceMatrix.setUsage(THREE.DynamicDrawUsage); contact.frustumCulled = false;
+  scene.add(contact); scene.userData.contactShadows = contact;
+  scene.userData.shadowTransform = new THREE.Object3D();
   const sheen = lampReflectionTexture();
   const ribbons = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.55, 4.8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: sheen, color: '#a9bfd1', transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }), 420);
   const marker = new THREE.Object3D();
@@ -189,6 +194,15 @@ function makeRoadReflections() {
 }
 
 function updateReflections() {
+  const transform = scene.userData.shadowTransform;
+  for (let i = 0; i <= race.rivals.length; i++) {
+    const racer = i ? race.rivals[i - 1] : race.player;
+    const frame = roadFrame(routeLength * racer.distance / race.length);
+    transform.position.copy(frame.point).addScaledVector(frame.right, racer.lane * SCALE);
+    transform.position.y = 0.175; transform.rotation.y = frame.yaw; transform.updateMatrix();
+    scene.userData.contactShadows.setMatrixAt(i, transform.matrix);
+  }
+  scene.userData.contactShadows.instanceMatrix.needsUpdate = true;
   reflections.forEach((mesh) => {
     const i = mesh.userData.racerIndex;
     const racer = i ? race.rivals[i - 1] : race.player;
@@ -279,15 +293,18 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
     const p = roadSamples[i], t = roadTangent(i); const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
     for (const side of [-1, 1]) {
       vertices.push(p.x + right.x * ROAD_HALF * side, 0.16, p.z + right.z * ROAD_HALF * side);
-      uvs.push((side + 1) / 2, (i - 1) / 600 * routeLength / 4);
+      uvs.push(side + 1, (i - 1) / 600 * routeLength / 2);
     }
     if (i < roadSamples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
   }
   const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
   materials.asphalt.map = asphalt ?? asphaltTexture();
-  materials.asphalt.color.set(timeOfDay === 'Day' ? '#bdc1c2' : '#a7adb0');
-  materials.asphalt.roughness = timeOfDay === 'Day' ? 0.38 : 0.24;
-  materials.asphalt.metalness = 0.13; materials.asphalt.needsUpdate = true;
+  const wetMaps = createWetSurfaceMaps();
+  materials.asphalt.color.set('#64768a');
+  materials.asphalt.roughness = 0.55; materials.asphalt.roughnessMap = wetMaps.roughness;
+  materials.asphalt.normalMap = wetMaps.normal; materials.asphalt.normalScale.set(0.18, 0.18);
+  materials.asphalt.envMapIntensity = 0.85;
+  materials.asphalt.metalness = 0.02; materials.asphalt.needsUpdate = true;
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ map: seaTexture(), roughness: 0.46, metalness: 0.16, side: THREE.DoubleSide })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
@@ -409,24 +426,13 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
 }
 
 function makeEnvironment(timeOfDay) {
-  const tones = { Morning: ['#a7c9d8', '#f1c79b', 0xffe0b0], Day: ['#87b6cd', '#d3e1db', 0xffffff], Sunset: ['#65496d', '#ef9f72', 0xffc179], Night: ['#101a34', '#2a315b', 0x99b8ff] };
-  const [sky, horizon, sun] = tones[timeOfDay] ?? tones.Sunset;
-  scene.background = new THREE.Color(sky);
-  const skyGeometry = new THREE.SphereGeometry(1500, 40, 20);
-  const positions = skyGeometry.getAttribute('position'); const colors = [];
-  const high = new THREE.Color(sky), low = new THREE.Color(horizon);
-  for (let i = 0; i < positions.count; i++) {
-    const height = positions.getY(i) / 1500;
-    const color = low.clone().lerp(high, THREE.MathUtils.smoothstep(height, -0.08, 0.62));
-    colors.push(color.r, color.g, color.b);
-  }
-  skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  const skyDome = new THREE.Mesh(skyGeometry, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false, fog: false }));
-  skyDome.frustumCulled = false; scene.add(skyDome); scene.userData.skyDome = skyDome;
-  scene.fog = new THREE.Fog(horizon, 90, 450);
-  const hemi = new THREE.HemisphereLight(0xc5d8e9, 0x26303a, timeOfDay === 'Night' ? 0.6 : 1.45); scene.add(hemi);
-  const key = new THREE.DirectionalLight(sun, timeOfDay === 'Night' ? 1.2 : 2.2); key.position.set(-60, 90, 40); scene.add(key);
-  const disk = new THREE.Mesh(new THREE.SphereGeometry(timeOfDay === 'Night' ? 4 : 12, 20, 16), new THREE.MeshBasicMaterial({ color: timeOfDay === 'Night' ? '#d9e5ff' : '#ffd29a' })); disk.position.set(-110, 105, routeLength * 0.22); scene.add(disk);
+  const tones = { Morning: ['#a8a9ac', 0xffdab4], Day: ['#b7c9cd', 0xfff1dc], Sunset: ['#9c8a90', 0xffd0b2], Night: ['#2f3b54', 0x9cb9ef] };
+  const [horizon, sun] = tones[timeOfDay] ?? tones.Sunset;
+  scene.background = createSkyTexture(timeOfDay);
+  scene.fog = new THREE.Fog(horizon, 100, 430);
+  scene.add(new THREE.HemisphereLight(0xbacfe7, 0x293543, timeOfDay === 'Night' ? 0.5 : 0.95));
+  const key = new THREE.DirectionalLight(sun, timeOfDay === 'Night' ? 0.65 : 1.55);
+  key.position.set(-60, 70, 40); scene.add(key);
 }
 
 function showEvent(message) {
@@ -481,7 +487,6 @@ function tick(now) {
   desired.addScaledVector(frame.right, race.player.lane * SCALE * 0.65);
   if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
   const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
-  scene.userData.skyDome.position.copy(camera.position);
   scene.userData.kartFill.position.copy(camera.position).add(new THREE.Vector3(0, 2, 0));
   renderer.render(scene, camera); renderHud(now);
   if (result.collision) shake = Math.max(shake, 0.25 + race.player.speed * 0.006);
@@ -524,6 +529,14 @@ let raceConfig;
 function leave() { dispose(); onExitCallback?.(); }
 function dispose() {
   disposed = true; cancelAnimationFrame(raf); held.clear();
+  scene?.background?.dispose?.();
+  scene?.userData.environmentTarget?.dispose();
+  const textures = new Set();
+  scene?.traverse((object) => {
+    const list = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of list) if (material) for (const value of Object.values(material)) if (value?.isTexture) textures.add(value);
+  });
+  textures.forEach((texture) => texture.dispose());
   if (renderer) { renderer.dispose(); renderer.domElement.remove(); }
   scene?.traverse((object) => { object.geometry?.dispose?.(); if (Array.isArray(object.material)) object.material.forEach((m) => m.dispose?.()); else object.material?.dispose?.(); });
   renderer = scene = camera = cameraTarget = weather = reflections = minimap = null;
@@ -560,6 +573,11 @@ async function start(config) {
   minimap = makeMinimap(); reflections = makeRoadReflections();
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6)); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
+  // Filter the static sky once for PBR reflections, with no per-frame reflection pass.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const environment = pmrem.fromEquirectangular(scene.background);
+  scene.environment = environment.texture; scene.userData.environmentTarget = environment;
+  pmrem.dispose();
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
   weather = makeWeather();
