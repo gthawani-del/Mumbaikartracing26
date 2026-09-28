@@ -168,7 +168,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
       markerTransform.position.set(p.x + right.x * side * ROAD_HALF / 3, 0.19, p.z + right.z * side * ROAD_HALF / 3);
       markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.updateMatrix(); centerMarks.setMatrixAt(markerCount++, markerTransform.matrix);
     }
-    if (i % 8 === 0) for (const side of [-1, 1]) {
+    if (i % 12 === 0) for (const side of [-1, 1]) {
       const lamp = new THREE.Group(); const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.07, 4.4, 7), materials.rail); pole.position.y = 2.25; lamp.add(pole);
       const arm = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.12), materials.rail); arm.position.set(-side * 0.9, 4.3, 0); lamp.add(arm);
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), new THREE.MeshBasicMaterial({ color: '#ffd7a0' })); bulb.position.set(-side * 0.9, 4.22, 0); lamp.add(bulb);
@@ -177,7 +177,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete) {
   }
   centerMarks.count = markerCount; scene.add(centerMarks);
   // Cable-stayed pylons and fine cables at four cinematic spans.
-  for (const fraction of [0.18, 0.28, 0.72, 0.82]) {
+  for (const fraction of [0.035, 0.28, 0.72, 0.92]) {
     const frame = roadFrame(routeLength * fraction);
     if (pylonTemplate) {
       const pylon = pylonTemplate.clone(true); pylon.scale.setScalar(SCALE); pylon.position.copy(frame.point); pylon.position.y = 0.16; pylon.rotation.y = frame.yaw; scene.add(pylon);
