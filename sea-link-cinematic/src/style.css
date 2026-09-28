@@ -14,3 +14,25 @@
   .mobile-controls{bottom:calc(15px + env(safe-area-inset-bottom));left:14px;right:14px}
   .game-map-attribution{bottom:calc(2px + env(safe-area-inset-bottom));font-size:7px}
 }
+
+/* Thumb controls: consistent placement across touch and desktop layouts. */
+.mobile-controls{inset:auto max(12px,env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));transform:none;align-items:end;gap:12px}
+.mobile-controls button{display:flex;align-items:center;justify-content:center;gap:5px;border:1px solid #c8e5ff70;background:linear-gradient(145deg,#263a4ec9,#0b1626bb);box-shadow:inset 0 1px 0 #fff3,0 5px 0 #06101a9c,0 8px 20px #0004;-webkit-tap-highlight-color:transparent;transition:transform .14s ease,background .14s ease}
+.mobile-controls button.pressed,.mobile-controls button:active{transform:translateY(3px) scale(.92);transition-duration:0s;background:#40637ddd;box-shadow:inset 0 2px 5px #0006,0 0 18px #9acbff30}
+.mobile-controls button:focus-visible{outline:3px solid white;outline-offset:3px}
+.mobile-controls svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.mobile-controls span{pointer-events:none}
+.steer-pad{flex-direction:row;gap:6px;padding:5px;border-radius:32px;background:#07132066;border:1px solid #c2ddff35}
+.steer-pad button{width:52px;height:56px;border-radius:26px;font-size:12px}
+.drive-pad{grid-template-columns:62px 72px;grid-template-rows:44px 104px;gap:8px;grid-template-areas:"drift boost" "brake gas";align-items:end}
+.drive-pad button{width:100%;height:44px;border-radius:14px;font-size:9px;font-weight:900;letter-spacing:.08em;flex-direction:column;gap:2px}
+.drive-pad button svg{width:20px;height:20px}
+.drive-pad [data-control=accelerate]{grid-area:gas;height:104px;border-radius:20px;border-color:#e0ffc8b0;background:linear-gradient(145deg,#618d37d9,#203d27dd);color:#edffd6;font-size:12px}
+.drive-pad [data-control=accelerate] svg{height:52px;width:34px}
+.drive-pad [data-control=brake]{grid-area:brake;height:57px;border-color:#ff9ca3a6;color:#ffc8ce;background:linear-gradient(145deg,#78323bba,#301d2ac9)}
+.drive-pad [data-control=drift]{grid-area:drift;border-color:#64d6ff;color:#98e7ff}
+.drive-pad [data-control=boost]{grid-area:boost;border-color:#ffab45;color:#ffcd80;background:linear-gradient(145deg,#8e4a23b8,#38251dcc)}
+.hud-bottom .speed-card{right:18px;bottom:calc(185px + env(safe-area-inset-bottom))}
+.hud-bottom .boost-card{left:20px;bottom:calc(103px + env(safe-area-inset-bottom));width:102px}
+@media(min-width:701px){.speed-dial{width:100px;height:100px}.speed-dial strong{font-size:35px}.speed-dial small{font-size:10px}}
+@media(max-height:500px){.drive-pad{grid-template-rows:40px 76px}.drive-pad [data-control=accelerate]{height:76px}.drive-pad [data-control=accelerate] svg{height:34px}.hud-bottom .speed-card{bottom:calc(150px + env(safe-area-inset-bottom))}.speed-dial{width:66px;height:66px;border-width:4px}.speed-dial strong{font-size:24px}.speed-dial small{font-size:7px}}

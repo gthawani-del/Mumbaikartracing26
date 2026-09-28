@@ -126,28 +126,52 @@ function makeKart(color = '#a63e35') {
   return group;
 }
 
-function modelKart(template, color) {
+function racerPlate(number, color) {
+  const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#eef1df'; ctx.fillRect(0, 0, 256, 128);
+  ctx.fillStyle = color; ctx.fillRect(0, 0, 16, 128); ctx.fillRect(240, 0, 16, 128);
+  ctx.fillStyle = '#17212c'; ctx.textAlign = 'center'; ctx.font = '900 77px sans-serif';
+  ctx.fillText(String(number).padStart(2, '0'), 128, 84);
+  ctx.font = 'bold 18px sans-serif'; ctx.fillText('MUMBAI • SEA LINK', 128, 112);
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function modelKart(template, color = '#ea364e', number = 1) {
   const object = (template.getObjectByName('KartRoot') ?? template).clone(true);
-  const wheels = [];
+  const wheels = [], lamps = [];
   const replacements = new Map();
-  function recolour(material) {
-    const isShell = material.userData?.recolorable === true || /^Crimson paint(?:\.\d+)?$/i.test(material.name);
-    if (!color || !material.color || !isShell) return material;
-    if (!replacements.has(material)) {
-      const copy = material.clone();
-      copy.color.set(color);
-      replacements.set(material, copy);
+  function personalise(material) {
+    if (replacements.has(material)) return replacements.get(material);
+    const copy = material.clone();
+    const name = material.name.replace(/\.\d+$/, '');
+    if (material.userData?.recolorable || name === 'Crimson paint') {
+      copy.color.set(color); copy.roughness = 0.25; copy.envMapIntensity = 1.3;
+    } else if (name === 'Driver navy cloth') {
+      copy.color.set(color).multiplyScalar(0.6); copy.roughness = 0.95;
+    } else if (name === 'Cloth raised seams' || name === 'Fairing highlight') {
+      copy.color.set('#e5e9dd');
+    } else if (name === 'Brushed alloy') {
+      copy.roughness = 0.3; copy.envMapIntensity = 1.2;
+    } else if (name === 'Red LED') {
+      copy.emissive.set('#ff172b'); copy.emissiveIntensity = 0.7; lamps.push(copy);
     }
-    return replacements.get(material);
+    replacements.set(material, copy);
+    return copy;
   }
   object.traverse(part => {
     if (/^Wheel(?:Front|Rear)[LR]$/.test(part.name)) wheels.push(part);
     if (!part.isMesh) return;
-    part.material = Array.isArray(part.material)
-      ? part.material.map(recolour)
-      : recolour(part.material);
+    part.material = Array.isArray(part.material) ? part.material.map(personalise) : personalise(part.material);
   });
-  object.userData.wheels = wheels;
+  // A mapped decal over the existing rear registration bracket.
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.53, 0.265), new THREE.MeshStandardMaterial({
+    map: racerPlate(number, color), roughness: 0.55, metalness: 0.1,
+    polygonOffset: true, polygonOffsetFactor: -1,
+  }));
+  plate.position.set(0, 0.51, -1.218); plate.rotation.y = Math.PI; object.add(plate);
+  object.userData.wheels = wheels; object.userData.lamps = lamps;
   object.scale.setScalar(KART_SCALE);
   return object;
 }
@@ -324,6 +348,15 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ map: seaTexture(), roughness: 0.46, metalness: 0.16, side: THREE.DoubleSide })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
+  const checks = new THREE.InstancedMesh(new THREE.PlaneGeometry(ROAD_HALF / 4, 0.4).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#f3eee3', roughness: 0.55, polygonOffset: true, polygonOffsetFactor: -2 }), 16);
+  const checkPose = new THREE.Object3D(); let checkCount = 0;
+  for (const finish of [false, true]) for (let row = 0; row < 2; row++) for (let col = 0; col < 8; col++) {
+    if ((row + col) % 2) continue;
+    const frame = roadFrame(finish ? routeLength - 1 + row * 0.4 : 1 + row * 0.4);
+    checkPose.position.copy(frame.point).addScaledVector(frame.right, (col - 3.5) * ROAD_HALF / 4);
+    checkPose.position.y = 0.19; checkPose.rotation.y = frame.yaw; checkPose.updateMatrix(); checks.setMatrixAt(checkCount++, checkPose.matrix);
+  }
+  scene.add(checks);
   // Continuous shoulder lines follow the sampled OSM curve, including its bends.
   const edgeVertices = [], edgeIndices = [];
   for (let i = 0; i < roadSamples.length; i++) {
@@ -428,6 +461,8 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   }
   // Keep shore buildings beyond the ends of the bridge and away from the road frame.
   const buildingMat = [mat('#83919b'), mat('#9ba3a2'), mat('#71838b')];
+  const windows = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.48, 0.85), new THREE.MeshBasicMaterial({ color: '#ffd99a', transparent: true, opacity: timeOfDay === 'Day' ? 0.25 : 0.8 }), 2400);
+  const windowPose = new THREE.Object3D(); let windowCount = 0;
   for (const shore of [0, 1]) for (let i = 0; i < 24; i++) {
     const end = roadFrame(routeLength * shore);
     const side = i % 2 ? 1 : -1;
@@ -438,7 +473,16 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
       .addScaledVector(end.right, side * (28 + (i * 13 % 55)));
     const tower = new THREE.Mesh(new THREE.BoxGeometry(5 + (i % 4) * 2, h, 7 + (i % 3) * 2), buildingMat[i % buildingMat.length]);
     tower.position.set(position.x, h / 2 - 4, position.z); tower.rotation.y = end.yaw; scene.add(tower);
+    tower.updateMatrixWorld();
+    for (const face of [-1, 1]) for (let row = 0; row < Math.floor(h / 2.3); row++) for (let col = 0; col < 4; col++) {
+      if ((row * 7 + col * 3 + i) % 5 < 2) continue;
+      windowPose.position.set((col - 1.5) * 1.05, -h / 2 + 1.5 + row * 2.3, face * (3.51 + i % 3));
+      windowPose.position.applyMatrix4(tower.matrixWorld);
+      windowPose.rotation.set(0, end.yaw + (face < 0 ? Math.PI : 0), 0); windowPose.updateMatrix();
+      windows.setMatrixAt(windowCount++, windowPose.matrix);
+    }
   }
+  windows.count = windowCount; scene.add(windows);
 }
 
 function makeEnvironment(timeOfDay) {
@@ -576,6 +620,7 @@ function tick(now) {
   const input = controls();
   const result = advanceSimulation(simulation, race, input, dt);
   updateEngineAudio(result.frame.player, input);
+  for (const lamp of kart.userData.lamps ?? []) lamp.emissiveIntensity = input.brake ? 2.5 : 0.7;
   updateKart(kart, result.frame.player, dt, true);
   result.frame.rivals.forEach((rivalFrame, i) => updateKart(rivals[i], rivalFrame, dt));
   updateReflections(); updateWeather(dt);
@@ -660,8 +705,8 @@ async function start(config) {
   kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
   const kartFill = new THREE.DirectionalLight(0xd9e6ff, 1.15);
   kartFill.target = kart; scene.add(kartFill); scene.userData.kartFill = kartFill;
-  const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
-  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
+  const colors = ['#20baff', '#ffbd29', '#7fdf49', '#ac78ff', '#ff703e', '#29ddc5', '#fa62b5'];
+  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length], index + 2) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
   race = createRace({ length: routeMeters, rivals: config.rivals, difficulty: config.difficulty, events: config.events });
   simulation = createSimulation(race);
   minimap = makeMinimap(); reflections = makeRoadReflections();

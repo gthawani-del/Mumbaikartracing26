@@ -67,7 +67,18 @@
         </div>
         <div class="event-banner" id="event-banner" role="status"></div>
         <div class="game-map-attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> · ODbL</div>
-        <div class="mobile-controls"><div class="steer-pad"><button data-control="left" aria-label="Steer left">←</button><button data-control="right" aria-label="Steer right">→</button></div><div class="drive-pad"><button data-control="brake" aria-label="Brake">BRAKE</button><button data-control="drift" aria-label="Drift">DRIFT</button><button data-control="boost" aria-label="Boost">BOOST</button><button data-control="accelerate" aria-label="Accelerate">GO</button></div></div>
+        <div class="mobile-controls">
+          <div class="steer-pad" role="group" aria-label="Steering">
+            <button data-control="left" aria-label="Steer left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5 7 12l7 7M7 12h13"/></svg></button>
+            <button data-control="right" aria-label="Steer right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5 7 7-7 7M17 12H4"/></svg></button>
+          </div>
+          <div class="drive-pad" role="group" aria-label="Pedals and abilities">
+            <button data-control="drift" aria-label="Drift"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20c12-4-5-7 7-11M11 4l7 3-3 7"/></svg><span>DRIFT</span></button>
+            <button data-control="boost" aria-label="Boost"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 2-9 12h6l-1 8 9-13h-6z"/></svg><span>BOOST</span></button>
+            <button data-control="brake" aria-label="Brake"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14M12 5v14M17 5v14"/></svg><span>BRAKE</span></button>
+            <button data-control="accelerate" aria-label="Accelerate"><svg viewBox="0 0 24 36" aria-hidden="true"><rect x="5" y="2" width="14" height="30" rx="4"/><path d="M8 8h8M8 14h8M8 20h8M8 26h8"/></svg><span>GAS</span></button>
+          </div>
+        </div>
         <div class="race-overlay" id="pause-overlay" hidden><div class="race-modal"><p class="eyebrow">RACE PAUSED</p><h2>Take a breath.</h2><p>Sea Link sprint · Bandra to Worli</p><button id="resume-race" class="dialog-button">Resume race</button><button id="exit-race" class="exit-button">Back to setup</button></div></div>
         <div class="race-overlay" id="finish-overlay" hidden><div class="race-modal"><p class="eyebrow">FINISH · WORLI</p><h2 id="finish-title">Race complete</h2><p id="finish-copy"></p><button id="restart-race" class="dialog-button">Race again</button><button id="finish-exit" class="exit-button">Back to setup</button></div></div>
       </section>
