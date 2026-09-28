@@ -13,7 +13,7 @@ const held = new Set();
 const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'accelerate', KeyW: 'accelerate', Space: 'accelerate', ArrowDown: 'brake', KeyS: 'brake', ShiftLeft: 'drift', ShiftRight: 'drift', KeyE: 'boost' };
 let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], weather, reflections, minimap, raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
 let disposed = false, paused = false;
-let simulation, cameraAnchor;
+let simulation;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
 const materials = {
@@ -449,7 +449,8 @@ function controls() {
   return input;
 }
 
-function updateKart(object, distance, lane, dt, playerKart = false) {
+function updateKart(object, playerFrame, dt, playerKart = false) {
+  const { distance, lane, lateralSpeed } = playerFrame;
   const frame = roadFrame(routeLength * distance / race.length); const target = frame.point.clone().addScaledVector(frame.right, lane * SCALE);
   object.position.set(target.x, 0.16, target.z); object.rotation.y = frame.yaw;
   for (const wheel of object.userData.wheels) {
@@ -457,7 +458,7 @@ function updateKart(object, distance, lane, dt, playerKart = false) {
     wheel.rotation.x = -distance * SCALE / (radius * object.scale.x);
   }
   if (playerKart) {
-    object.rotation.z = THREE.MathUtils.damp(object.rotation.z, -simulation.frame.player.lateralSpeed * 0.018, 7, dt);
+    object.rotation.z = THREE.MathUtils.damp(object.rotation.z, -lateralSpeed * 0.018, 7, dt);
   }
 }
 
@@ -477,16 +478,29 @@ function renderHud(now) {
 }
 function stepPosition() { return racePosition(race); }
 
-function updateCamera(player, dt) {
-  const frame = roadFrame(routeLength * player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.2).addScaledVector(frame.right, player.lane * SCALE * 0.35); look.y += 0.9;
-  const translation = frame.point.clone().sub(cameraAnchor);
-  camera.position.add(translation); cameraTarget.add(translation); cameraAnchor.copy(frame.point);
+function updateCamera(playerFrame, dt) {
+  const frame = roadFrame(routeLength * playerFrame.distance / race.length);
   const tallPhone = camera.aspect < 0.52;
-  const desired = frame.point.clone().addScaledVector(frame.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0));
-  desired.addScaledVector(frame.right, player.lane * SCALE * 0.65);
-  if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
-  const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
-  scene.userData.kartFill.position.copy(camera.position).add(new THREE.Vector3(0, 2, 0));
+
+  // Physics interpolation already smooths this pose; no extra camera follow lag.
+  camera.position.copy(frame.point)
+    .addScaledVector(frame.tangent, tallPhone ? -3 : -2.55)
+    .addScaledVector(frame.right, playerFrame.lane * SCALE * 0.65);
+  camera.position.y += tallPhone ? 1.75 : 1.65;
+
+  cameraTarget.copy(frame.point)
+    .addScaledVector(frame.tangent, 5.2)
+    .addScaledVector(frame.right, playerFrame.lane * SCALE * 0.35);
+  cameraTarget.y += 0.9;
+
+  if (shake > 0) {
+    camera.position.x += (Math.random() - 0.5) * shake;
+    camera.position.y += (Math.random() - 0.5) * shake * 0.6;
+    shake = Math.max(0, shake - dt * 2.4);
+  }
+  camera.lookAt(cameraTarget);
+  scene.userData.kartFill.position.copy(camera.position);
+  scene.userData.kartFill.position.y += 2;
 }
 
 function tick(now) {
@@ -494,12 +508,11 @@ function tick(now) {
   raf = requestAnimationFrame(tick);
   const dt = lastFrame ? Math.max(0, Math.min((now - lastFrame) / 1000, 0.25)) : 0; lastFrame = now;
   const result = advanceSimulation(simulation, race, controls(), dt);
-  const player = result.frame.player;
-  updateKart(kart, player.distance, player.lane, dt, true);
-  result.frame.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
+  updateKart(kart, result.frame.player, dt, true);
+  result.frame.rivals.forEach((rivalFrame, i) => updateKart(rivals[i], rivalFrame, dt));
   updateReflections(); updateWeather(dt);
   // Late camera phase follows the exact same interpolated state as the models.
-  updateCamera(player, dt);
+  updateCamera(result.frame.player, dt);
   renderer.render(scene, camera); renderHud(now);
   if (result.collision) shake = Math.max(shake, 0.25 + race.player.speed * 0.006);
   for (const event of result.events) {
@@ -592,7 +605,7 @@ async function start(config) {
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
   weather = makeWeather();
-  const start = roadFrame(0); cameraAnchor = start.point.clone(); const tallPhone = camera.aspect < 0.52;
+  const start = roadFrame(0); const tallPhone = camera.aspect < 0.52;
   camera.position.copy(start.point).addScaledVector(start.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
   bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
   raf = requestAnimationFrame(tick);
