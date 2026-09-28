@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createSkyTexture, createWetSurfaceMaps } from './environment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createRace, racePosition, clamp } from './race-logic.js';
+import { createRace, racePosition, clamp, MAX_SPEED } from './race-logic.js';
 
 import { createSimulation, advanceSimulation } from './simulation.js';
 
@@ -14,6 +14,8 @@ const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'righ
 let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], weather, reflections, minimap, raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
 let disposed = false, paused = false;
 let simulation;
+let engineAudio = null;
+let soundMuted = false;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
 const materials = {
@@ -95,7 +97,8 @@ function roadFrame(distance) {
   const u = clamp(distance / routeLength, 0, 1);
   const point = curve.getPointAt(u);
   const tangent = curve.getTangentAt(u).normalize();
-  const right = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize();
+  // Driver right = forward cross world-up.
+  const right = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
   return { point, tangent, right, yaw: Math.atan2(tangent.x, tangent.z) };
 }
 
@@ -124,16 +127,25 @@ function makeKart(color = '#a63e35') {
 }
 
 function modelKart(template, color) {
-  // The presentation camera and lights stay outside the portable asset root.
   const object = (template.getObjectByName('KartRoot') ?? template).clone(true);
   const wheels = [];
-  object.traverse((part) => {
-    if (/^Wheel(?:Front|Rear)[LR]$/.test(part.name)) wheels.push(part);
-    if (!part.isMesh || !color) return;
-    if (/^Crimson paint(?:\.\d+)?$/.test(part.material.name)) {
-      part.material = part.material.clone();
-      part.material.color.set(color);
+  const replacements = new Map();
+  function recolour(material) {
+    const isShell = material.userData?.recolorable === true || /^Crimson paint(?:\.\d+)?$/i.test(material.name);
+    if (!color || !material.color || !isShell) return material;
+    if (!replacements.has(material)) {
+      const copy = material.clone();
+      copy.color.set(color);
+      replacements.set(material, copy);
     }
+    return replacements.get(material);
+  }
+  object.traverse(part => {
+    if (/^Wheel(?:Front|Rear)[LR]$/.test(part.name)) wheels.push(part);
+    if (!part.isMesh) return;
+    part.material = Array.isArray(part.material)
+      ? part.material.map(recolour)
+      : recolour(part.material);
   });
   object.userData.wheels = wheels;
   object.scale.setScalar(KART_SCALE);
@@ -443,6 +455,60 @@ function showEvent(message) {
   const banner = $('#event-banner'); banner.textContent = message; banner.classList.add('visible'); window.clearTimeout(eventTimeout); eventTimeout = window.setTimeout(() => banner.classList.remove('visible'), 2400);
 }
 
+// Base (126 km/h) and boost (162 km/h) limits live in race-logic.js.
+function unlockEngineAudio() {
+  const Context = window.AudioContext || window.webkitAudioContext;
+  if (!Context || disposed) return;
+  try {
+    if (!engineAudio) {
+      const context = new Context();
+      const oscillator = context.createOscillator();
+      const filter = context.createBiquadFilter();
+      const gain = context.createGain();
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.value = 45;
+      filter.type = 'lowpass';
+      filter.frequency.value = 450;
+      gain.gain.value = 0;
+      oscillator.connect(filter);
+      filter.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      engineAudio = { context, oscillator, filter, gain };
+    }
+    void engineAudio.context.resume().catch(() => {});
+  } catch {
+    // Sound must never prevent driving.
+  }
+}
+
+function updateEngineAudio(playerFrame, input) {
+  if (!engineAudio) return;
+  const { context, oscillator, filter, gain } = engineAudio;
+  const active = !disposed && !paused && !race.finished && !document.hidden && !soundMuted;
+  const speedRatio = clamp(playerFrame.speed / MAX_SPEED, 0, 1.2);
+  const throttle = active && input.accelerate ? 1 : 0;
+  const now = context.currentTime;
+  oscillator.frequency.setTargetAtTime(45 + speedRatio * 140 + throttle * 15, now, 0.05);
+  filter.frequency.setTargetAtTime(350 + speedRatio * 1100, now, 0.05);
+  gain.gain.setTargetAtTime(active ? 0.025 + throttle * 0.025 : 0, now, 0.025);
+}
+
+function silenceEngineAudio() {
+  if (!engineAudio) return;
+  const { context, gain } = engineAudio;
+  gain.gain.cancelScheduledValues(context.currentTime);
+  gain.gain.setTargetAtTime(0, context.currentTime, 0.015);
+}
+
+function disposeEngineAudio() {
+  if (!engineAudio) return;
+  const { context, oscillator } = engineAudio;
+  engineAudio = null;
+  oscillator.stop();
+  void context.close().catch(() => {});
+}
+
 function controls() {
   const input = Object.fromEntries(['left', 'right', 'accelerate', 'brake', 'drift', 'boost'].map((key) => [key, held.has(key)]));
   input.accelerate ||= held.has('accelerate');
@@ -507,7 +573,9 @@ function tick(now) {
   if (disposed || paused) return;
   raf = requestAnimationFrame(tick);
   const dt = lastFrame ? Math.max(0, Math.min((now - lastFrame) / 1000, 0.25)) : 0; lastFrame = now;
-  const result = advanceSimulation(simulation, race, controls(), dt);
+  const input = controls();
+  const result = advanceSimulation(simulation, race, input, dt);
+  updateEngineAudio(result.frame.player, input);
   updateKart(kart, result.frame.player, dt, true);
   result.frame.rivals.forEach((rivalFrame, i) => updateKart(rivals[i], rivalFrame, dt));
   updateReflections(); updateWeather(dt);
@@ -522,18 +590,19 @@ function tick(now) {
 }
 
 function finishRace() {
+  silenceEngineAudio();
   held.clear();
   const position = stepPosition(); $('#finish-title').textContent = position === 1 ? 'You won the Sea Link.' : `You finished ${position}${position === 2 ? 'nd' : position === 3 ? 'rd' : 'th'}.`;
   $('#finish-copy').textContent = `Bandra to Worli · ${race.elapsed.toFixed(1)} seconds · ${race.rivals.length + 1} racers`;
   $('#finish-overlay').hidden = false;
 }
 
-function keyDown(event) { if (disposed) return; const key = keys[event.code]; if (key) { held.add(key); event.preventDefault(); } if (event.code === 'Escape') pause(true); }
+function keyDown(event) { if (disposed) return; const key = keys[event.code]; if (key) { unlockEngineAudio(); held.add(key); event.preventDefault(); } if (event.code === 'Escape') pause(true); }
 function keyUp(event) { if (disposed) return; const key = keys[event.code]; if (key) { held.delete(key); event.preventDefault(); } }
 function pause(value) {
   if (disposed || race.finished) return;
   paused = value; $('#pause-overlay').hidden = !value;
-  if (value) { held.clear(); cancelAnimationFrame(raf); }
+  if (value) { silenceEngineAudio(); held.clear(); cancelAnimationFrame(raf); }
   else { lastFrame = 0; raf = requestAnimationFrame(tick); }
 }
 
@@ -543,17 +612,18 @@ function bindUi() {
   window.addEventListener('resize', resize);
   document.addEventListener('visibilitychange', () => { if (document.hidden && race && !disposed && !paused) pause(true); });
   document.querySelectorAll('[data-control]').forEach((button) => {
-    const start = (event) => { event.preventDefault(); held.add(button.dataset.control); button.classList.add('pressed'); button.setPointerCapture?.(event.pointerId); };
+    const start = (event) => { event.preventDefault(); unlockEngineAudio(); held.add(button.dataset.control); button.classList.add('pressed'); button.setPointerCapture?.(event.pointerId); };
     const end = (event) => { event.preventDefault(); held.delete(button.dataset.control); button.classList.remove('pressed'); };
     button.addEventListener('pointerdown', start); button.addEventListener('pointerup', end); button.addEventListener('pointercancel', end); button.addEventListener('lostpointercapture', end);
   });
-  $('#pause-race').addEventListener('click', () => pause(true)); $('#resume-race').addEventListener('click', () => pause(false));
+  $('#pause-race').addEventListener('click', () => pause(true)); $('#resume-race').addEventListener('click', () => { unlockEngineAudio(); pause(false); });
   $('#exit-race').addEventListener('click', leave); $('#finish-exit').addEventListener('click', leave);
   $('#restart-race').addEventListener('click', () => { $('#finish-overlay').hidden = true; start(raceConfig); });
 }
 let raceConfig;
 function leave() { dispose(); onExitCallback?.(); }
 function dispose() {
+  disposeEngineAudio();
   disposed = true; cancelAnimationFrame(raf); held.clear();
   scene?.background?.dispose?.();
   scene?.userData.environmentTarget?.dispose();

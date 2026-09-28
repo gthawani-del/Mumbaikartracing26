@@ -1,4 +1,7 @@
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+// Speeds are metres per second; HUD converts to km/h.
+export const MAX_SPEED = 126 / 3.6;
+export const BOOST_MAX_SPEED = 162 / 3.6;
 const LANE_LIMIT_METERS = 6.5;
 
 const DIFFICULTY_PACE = { Easy: 29, Medium: 33, Hard: 37 };
@@ -46,7 +49,7 @@ export function stepRace(race, input, elapsed) {
   const manualBoost = Boolean(input.boost) && player.charge > 0.01 && player.speed > 4 && !input.brake;
   const gateBoost = player.boostTime > 0;
   const boosting = manualBoost || gateBoost;
-  const topSpeed = boosting ? 45 : 35;
+  const topSpeed = boosting ? BOOST_MAX_SPEED : MAX_SPEED;
 
   if (input.brake) player.speed = Math.max(0, player.speed - 31 * dt);
   else if (input.accelerate) player.speed = Math.min(topSpeed, player.speed + (boosting ? 27 : 21) * dt);
@@ -87,7 +90,7 @@ export function stepRace(race, input, elapsed) {
     race.eventState.gateFired = true;
     if (Math.abs(player.lane) < 1.05) {
       player.boostTime = 2.4;
-      player.speed = Math.min(45, player.speed + 7);
+      player.speed = Math.min(BOOST_MAX_SPEED, player.speed + 7);
       messages.push({ type: 'gate', text: 'Clean line! Cable-shadow boost.' });
     } else messages.push({ type: 'gate-missed', text: 'Boost gate missed — reset your line.' });
   }
