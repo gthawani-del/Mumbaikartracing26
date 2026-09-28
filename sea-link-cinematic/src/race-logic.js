@@ -19,7 +19,7 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
     eventsEnabled: new Set(events),
     eventState: { windFired: false, gateFired: false, windTime: 0, windSide: 1 },
     sectors: [null, null],
-    player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, charge: 0.65, boostTime: 0, impacts: 0 },
+    player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, charge: 0.65, boostTime: 0, impacts: 0, finishTime: null },
     rivals: Array.from({ length: rivals }, (_, index) => ({
       distance: grid[index]?.distance ?? 48 + (index - grid.length + 1) * 9,
       lane: grid[index]?.lane ?? (index % 2 ? 4.2 : -4.2),
@@ -27,6 +27,7 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
       speed: 0,
       pace: pace + (index - (rivals - 1) / 2) * 0.55,
       finished: false,
+      finishTime: null,
     })),
   };
 }
@@ -106,6 +107,7 @@ export function stepRace(race, input, elapsed) {
     rival.distance = Math.min(race.length, rival.distance + rival.speed * dt);
     rival.lane = rival.baseLane + Math.sin(race.elapsed * 0.5 + prior * 0.04) * 0.14;
     rival.finished = rival.distance >= race.length;
+    if (rival.finished) rival.finishTime = race.elapsed - dt + (race.length - prior) / rival.speed;
     if (Math.abs(rival.distance - player.distance) < 3.2 && Math.abs(rival.lane - player.lane) < 1.35) {
       player.speed = Math.max(0, player.speed - 7 * dt);
       player.lateralSpeed += Math.sign(player.lane - rival.lane || 1) * 0.5;
@@ -116,11 +118,19 @@ export function stepRace(race, input, elapsed) {
 
   if (player.distance >= race.length) {
     race.finished = true;
+    player.finishTime = race.elapsed - dt + (race.length - previousDistance) / player.speed;
     if (race.sectors[1] === null) race.sectors[1] = race.elapsed;
     messages.push({ type: 'finish', text: 'Finish!' });
   }
-  const position = 1 + race.rivals.filter((rival) => rival.distance > player.distance).length;
+  const position = racePosition(race);
   return { events: messages, collision, drifting, boosting, position };
+}
+
+export function racePosition(race) {
+  return 1 + race.rivals.filter((rival) => {
+    if (race.player.finishTime !== null) return rival.finishTime !== null && rival.finishTime <= race.player.finishTime;
+    return rival.distance > race.player.distance;
+  }).length;
 }
 
 export function advanceRace(race, input, elapsed) {

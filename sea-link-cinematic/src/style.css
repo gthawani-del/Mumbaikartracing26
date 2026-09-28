@@ -6,3 +6,11 @@
 @media(max-width:700px){.mobile-controls{inset:auto 14px 18px}.hud-bottom{margin-bottom:86px;padding:11px 12px;gap:12px}.speed-card{min-width:72px}.boost-card{width:58px}.hud-brand{font-size:9px}.race-position{min-width:68px;padding:8px 10px}.race-position strong{font-size:24px}.race-hud{padding:13px}.event-banner{top:20%;font-size:11px}.steer-pad button{width:51px;height:51px}.drive-pad{grid-template-columns:repeat(2,51px);gap:7px}.drive-pad button{height:40px}.drive-pad [data-control=accelerate]{height:87px}}
 @media(min-width:900px){.mobile-controls{inset:50% 24px auto;transform:translateY(-50%);align-items:center}.steer-pad{flex-direction:column}.steer-pad button{width:49px;height:49px;border-radius:50%}.drive-pad{grid-template-columns:repeat(2,54px)}.drive-pad button{height:45px}}
 .game-map-attribution{position:absolute;left:9px;bottom:4px;color:#ffffffaa;font-size:8px;text-shadow:0 1px 4px #111;pointer-events:none}.game-map-attribution a{color:inherit;pointer-events:auto}
+@media(max-width:700px){
+  .hud-top{justify-content:space-between}.hud-brand{display:none}.race-position{min-width:70px}
+  .hud-bottom{position:absolute;top:calc(66px + env(safe-area-inset-top));left:14px;right:14px;width:auto;max-width:none;margin:0;padding:10px 11px;gap:10px;align-items:center;background:#1017239c}
+  .speed-card{min-width:68px;flex-direction:column;align-items:flex-start;gap:1px}.speed-card strong{font-size:34px}.speed-card small{font-size:8px}
+  .race-progress{min-width:0}.progress-label{font-size:8px}.progress-ends{font-size:7px}.boost-card{width:40px;flex:none;font-size:7px}
+  .mobile-controls{bottom:calc(15px + env(safe-area-inset-bottom));left:14px;right:14px}
+  .game-map-attribution{bottom:calc(2px + env(safe-area-inset-bottom));font-size:7px}
+}

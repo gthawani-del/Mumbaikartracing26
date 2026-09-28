@@ -17,6 +17,21 @@ function projectFactory(route, roads) {
 function pathFor(coords, project) {
   return coords.map((point, index) => { const [x, y] = project(point); return `${index ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`; }).join(' ');
 }
+function pointAtFraction(route, fraction) {
+  const lengths = route.slice(1).map(([lon, lat], index) => {
+    const [prevLon, prevLat] = route[index];
+    return Math.hypot((lon - prevLon) * 111320 * Math.cos(((lat + prevLat) / 2) * Math.PI / 180), (lat - prevLat) * 111320);
+  });
+  let remaining = lengths.reduce((sum, length) => sum + length, 0) * fraction;
+  for (let index = 0; index < lengths.length; index++) {
+    if (remaining <= lengths[index]) {
+      const t = remaining / lengths[index];
+      return route[index].map((coordinate, axis) => coordinate + (route[index + 1][axis] - coordinate) * t);
+    }
+    remaining -= lengths[index];
+  }
+  return route.at(-1);
+}
 function renderMap(data) {
   const project = projectFactory(data.route, data.roads);
   const roads = data.roads.map((road) => {
@@ -24,7 +39,7 @@ function renderMap(data) {
     return `<path class="mapped-road ${major ? 'mapped-road-major' : ''}" d="${pathFor(road.coordinates, project)}"/>`;
   }).join('');
   const routePath = pathFor(data.route, project); const [startX, startY] = project(data.route[0]); const [endX, endY] = project(data.route.at(-1));
-  const splits = [0.25, 0.5, 0.75].map((fraction) => project(data.route[Math.floor((data.route.length - 1) * fraction)]));
+  const splits = [1 / 3, 2 / 3].map((fraction) => project(pointAtFraction(data.route, fraction)));
   svg.innerHTML = `<defs><linearGradient id="water" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#dcebea"/><stop offset="1" stop-color="#c6dddd"/></linearGradient><filter id="route-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect width="760" height="520" fill="url(#water)"/><path class="shoreline" d="M0 0H198Q217 68 200 133T215 260Q226 340 202 410T213 520H0Z"/><path class="shoreline-detail" d="M205 0Q230 79 210 148T226 279Q236 360 213 430T224 520"/><g class="map-lines">${roads}</g><path class="route-halo" d="${routePath}"/><path class="race-route" d="${routePath}"/>${splits.map(([x, y], index) => `<g class="checkpoint"><circle cx="${x}" cy="${y}" r="9"/><text x="${x + 15}" y="${y + 4}">SPLIT ${index + 1}</text></g>`).join('')}<g class="endpoint start-point"><circle cx="${startX}" cy="${startY}" r="13"/><text x="${startX + 19}" y="${startY + 5}">BANDRA · START</text></g><g class="endpoint finish-point"><circle cx="${endX}" cy="${endY}" r="13"/><text x="${endX + 19}" y="${endY + 5}">WORLI · FINISH</text></g><text class="map-water-label" x="90" y="370">MAHIM BAY</text><text class="map-land-label" x="585" y="102">MUMBAI</text>`;
   mapLoading.hidden = true; window.routeData = data;
 }
@@ -51,7 +66,7 @@ document.querySelectorAll('[data-event]').forEach((button) => button.addEventLis
 }));
 document.querySelector('#kartInfo').addEventListener('click', () => showToast('Adult driver · four-wheel open-frame racing kart'));
 function reviewRace() {
-  document.querySelector('#dialog-detail').innerHTML = `<div><span>ROUTE</span><b>Bandra → Worli</b></div><div><span>RACERS</span><b>${state.rivals + 1} total · ${esc(state.difficulty)} AI</b></div><div><span>CONDITIONS</span><b>${esc(state.timeOfDay)} · ${state.events.size} events</b></div>`;
+  document.querySelector('#dialog-detail').innerHTML = `<div><span>ROUTE</span><b>Bandra → Worli</b></div><div><span>RACERS</span><b>${state.rivals + 1} total · ${esc(state.difficulty)} AI</b></div><div><span>CONDITIONS</span><b>${esc(state.timeOfDay)} · ${state.events.size} event${state.events.size === 1 ? '' : 's'}</b></div>`;
   document.querySelector('#review-dialog').showModal();
 }
 document.querySelector('#start-race').addEventListener('click', reviewRace);

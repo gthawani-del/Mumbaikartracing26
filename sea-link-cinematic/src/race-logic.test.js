@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRace, stepRace, advanceRace } from './race-logic.js';
+import { createRace, stepRace, advanceRace, racePosition } from './race-logic.js';
 
 test('creates the requested rival field and an open point-to-point course', () => {
   const race = createRace({ length: 120, rivals: 7 });
@@ -65,4 +65,11 @@ test('race finishes once and progress cannot exceed the route end', () => {
   assert.equal(race.player.distance, 5);
   stepRace(race, { accelerate: true }, 0.05);
   assert.equal(race.elapsed, 0.05);
+});
+
+test('a rival who crosses the finish first stays ahead of the player', () => {
+  const race = createRace({ length: 300, rivals: 3, difficulty: 'Hard' });
+  while (!race.finished) advanceRace(race, { accelerate: true }, 1 / 60);
+  assert.ok(race.rivals[0].finishTime < race.player.finishTime);
+  assert.equal(racePosition(race), 4);
 });
