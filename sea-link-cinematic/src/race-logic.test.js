@@ -147,3 +147,10 @@ test('drift provides throttle with steering, and brake still wins', () => {
   stepRace(race, { drift: true, brake: true }, 1 / 60);
   assert.ok(race.player.speed < speed);
 });
+
+test('fresh boost from rest reaches 250 before its initial charge runs out', () => {
+  const race = createRace({ length: 10000, rivals: 0 });
+  for (let i = 0; i < 150; i++) stepRace(race, { boost: true }, 1 / 60);
+  assert.equal(race.player.speed * 3.6, 250);
+  assert.ok(race.player.charge > 0 && race.player.boosting);
+});

@@ -20,6 +20,7 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
   return {
     length,
     contacts: new Set(),
+    overtakes: 0,
     elapsed: 0,
     finished: false,
     eventsEnabled: new Set(events),
@@ -56,7 +57,7 @@ export function stepRace(race, input, elapsed) {
   // Boost doubles as throttle, so a phone player only needs two thumbs.
   // Once depleted, require release and enough charge for a useful new burst.
   if (!input.boost) player.boostExhausted = false;
-  const enoughCharge = player.charge >= (player.manualBoosting ? 0.42 * dt : BOOST_MIN_CHARGE);
+  const enoughCharge = player.charge >= (player.manualBoosting ? 0.22 * dt : BOOST_MIN_CHARGE);
   const manualBoost = Boolean(input.boost) && !player.boostExhausted && enoughCharge && !input.brake;
   if (input.boost && player.manualBoosting && !enoughCharge) player.boostExhausted = true;
   player.manualBoosting = manualBoost;
@@ -70,9 +71,9 @@ export function stepRace(race, input, elapsed) {
     ? Math.max(topSpeed, player.speed - 12 * dt)
     : Math.min(topSpeed, player.speed + (boosting ? 32 : 23) * dt);
   else player.speed = Math.max(0, player.speed - 3.2 * dt);
-  if (manualBoost) player.charge = Math.max(0, player.charge - 0.42 * dt);
+  if (manualBoost) player.charge = Math.max(0, player.charge - 0.22 * dt);
   else if (drifting) player.charge = Math.min(1, player.charge + 0.3 * dt);
-  else player.charge = Math.min(1, player.charge + 0.018 * dt);
+  else player.charge = Math.min(1, player.charge + 0.055 * dt);
   player.boostTime = Math.max(0, player.boostTime - dt);
 
   const targetLateralSpeed = steer * (drifting ? 5.2 : 4.3) * clamp(player.speed / 16, 0, 1);
@@ -154,6 +155,9 @@ export function stepRace(race, input, elapsed) {
     if (race.sectors[1] === null) race.sectors[1] = race.elapsed;
     messages.push({ type: 'finish', text: 'Finish!' });
   }
+  race.rivals.forEach((r, i) => {
+    if (previousDistance < previous[i + 1].distance && player.distance > r.distance && !r.finished) race.overtakes++;
+  });
   const position = racePosition(race);
   return { events: messages, collision, drifting, boosting, position };
 }

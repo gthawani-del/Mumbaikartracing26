@@ -1,6 +1,7 @@
+import { createFinish, advanceFinish } from './race-finish.js';
 import { createIntro, advanceIntro, skipIntro } from './race-intro.js';
 import * as THREE from 'three';
-import { createWeatherState, advanceWeather } from './weather-state.js';
+import { createWeatherState, advanceWeather, tyreSurface } from './weather-state.js';
 import { createOcean, createBoostEffects, updateBoostEffects } from './race-effects.js';
 import { createSkyTexture, createWetSurfaceMaps } from './environment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -19,6 +20,8 @@ let disposed = false, paused = false;
 let simulation, ocean, boostEffects, intro, visualTime = 0;
 let engineAudio = null;
 let contactSparks;
+let finishPresentation = null, finalPush = false, helmetEquipped = false, helmetPrompted = false;
+let slowFrames = 0, pixelRatio = 1.6, reducedMotion = false;
 let soundMuted = false;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
@@ -159,6 +162,8 @@ function modelKart(template, color = '#ea364e', number = 1) {
   }));
   plate.position.set(0, 0.51, -1.218); plate.rotation.y = Math.PI; object.add(plate);
   object.userData.driver = ['DriverTorso', 'DriverHead', 'DriverHands'].map(name => object.getObjectByName(name));
+  object.userData.helmet = object.getObjectByName('RainHelmet');
+  if (object.userData.helmet) object.userData.helmet.visible = false;
   object.userData.wheels = wheels; object.userData.lamps = lamps;
   object.scale.setScalar(KART_SCALE);
   return object;
@@ -258,11 +263,14 @@ function updateWeather(dt) {
   const changed = advanceWeather(weather.state, dt);
   const { rain, wetness } = weather.state;
   if (changed) showEvent(weather.state.heavy ? 'Heavy coastal shower — visibility reduced' : 'Rain easing — road still wet');
-  const label = rain > 0.65 ? 'HEAVY RAIN' : rain > 0.3 ? 'RAIN' : 'LIGHT RAIN';
+  const label = rain > 0.65 ? 'HEAVY RAIN' : rain > 0.08 ? 'RAIN' : wetness >= .12 ? 'WET ROAD' : 'DRY ROAD';
+  if (rain > .65 && !helmetPrompted && !helmetEquipped && kart.userData.helmet) {
+    helmetPrompted = true; $('#rain-helmet').hidden = false; $('#rain-helmet').classList.add('prompt');
+  }
   if ($('#weather-status').textContent !== label) $('#weather-status').textContent = label;
   scene.backgroundIntensity = 1 - rain * .25;
   scene.environmentIntensity = 1 - rain * .2;
-  weather.rainGeo.setDrawRange(0, Math.round(70 + rain * 630) * 2);
+  weather.rainGeo.setDrawRange(0, Math.round(rain * 700) * 2);
   weather.rain.material.opacity = 0.16 + rain * 0.32;
   materials.asphalt.roughness = 0.65 - wetness * 0.43;
   materials.asphalt.envMapIntensity = 0.7 + wetness * 1.4;
@@ -271,8 +279,11 @@ function updateWeather(dt) {
   scene.userData.wetRibbons.material.opacity = 0.07 + wetness * 0.35;
   scene.userData.lampReflections.material.opacity = 0.25 + wetness * 0.65;
   scene.fog.far = 430 - rain * 180;
-  weather.spray.material.opacity = 0.3 + wetness * 0.55;
-  weather.spray.material.size = 0.09 + wetness * 0.12;
+  const water = tyreSurface(wetness) === 'water';
+  weather.spray.userData.surface = water ? 'water' : 'dust';
+  weather.spray.material.color.set(water ? '#cbdce5' : '#98806b');
+  weather.spray.material.opacity = water ? .45 + wetness * .25 : .18;
+  weather.spray.material.size = water ? .07 + wetness * .06 : .16;
   ocean.material.uniforms.time.value += dt;
   weather.drops.forEach((drop, i) => {
     drop.y -= dt * (12 + rain * 12); drop.x -= dt * (2 + rain * 4);
@@ -283,20 +294,21 @@ function updateWeather(dt) {
   });
   weather.rainGeo.attributes.position.needsUpdate = true;
   const frame = roadFrame(routeLength * simulation.frame.player.distance / race.length);
-  weather.sprayBudget = Math.min(4, weather.sprayBudget + dt * (12 + wetness * 60));
+  weather.sprayBudget = Math.min(4, weather.sprayBudget + dt * (water ? 18 + wetness * 48 : 12));
   const sprayBursts = Math.floor(weather.sprayBudget); weather.sprayBudget -= sprayBursts;
   if (race.player.speed > 10) for (let burst = 0; burst < sprayBursts; burst++) for (const side of [-1, 1]) {
     const particle = weather.particles[weather.cursor] ?? {};
     particle.position = kart.position.clone().addScaledVector(frame.right, side * 0.36).addScaledVector(frame.tangent, -0.33);
     particle.position.y = 0.27;
     particle.velocity = frame.tangent.clone().multiplyScalar(-0.7 - Math.random() * 1.2).addScaledVector(frame.right, side * (0.3 + Math.random()));
-    particle.velocity.y = 0.35 + Math.random() * 0.55; particle.life = 0.28 + Math.random() * 0.24;
+    particle.velocity.y = water ? .25 + Math.random() * .35 : .1; particle.life = water ? .25 + Math.random() * .15 : .5;
+    particle.gravity = water ? 2.2 : 0;
     weather.particles[weather.cursor] = particle; weather.cursor = (weather.cursor + 1) % 80;
   }
   weather.particles.forEach((particle, i) => {
     if (particle.life > 0) {
       particle.life -= dt; particle.position.addScaledVector(particle.velocity, dt);
-      particle.velocity.y -= 2.2 * dt;
+      particle.velocity.y -= particle.gravity * dt;
     }
     const offset = i * 3, buffer = weather.sprayPositions;
     if (particle.life > 0) { buffer[offset] = particle.position.x; buffer[offset + 1] = Math.max(0.2, particle.position.y); buffer[offset + 2] = particle.position.z; }
@@ -338,6 +350,30 @@ function textureModels(kartTemplate, pylonTemplate, fabric, concrete) {
     part.material = part.material.clone(); part.material.color.set('#eeeeee');
     part.material.map = concrete; part.material.roughness = 0.78;
   });
+}
+
+function cableBranding(frame, timeOfDay) {
+  const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 74px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = timeOfDay === 'Night' ? '#ffe3a0' : '#ecede2';
+  ctx.fillText('Branding Available', 512, 128);
+  // Cable-like strips break up the lettering, leaving sky and actual stays visible.
+  ctx.globalCompositeOperation = 'destination-out';
+  for (let x = 0; x < 1024; x += 14) ctx.clearRect(x, 0, 2, 256);
+  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+  for (const side of [1]) {
+    const ad = new THREE.Mesh(new THREE.PlaneGeometry(34, 8.5), new THREE.MeshBasicMaterial({
+      map: texture, transparent: true, opacity: timeOfDay === 'Night' ? .95 : .65,
+      side: THREE.DoubleSide, depthWrite: false, toneMapped: false }));
+    ad.name = 'Cable fan Branding Available';
+    ad.position.copy(frame.point).addScaledVector(frame.tangent, 18).addScaledVector(frame.right, side * 3.15);
+    ad.position.y = 9; ad.rotation.y = frame.yaw - side * Math.PI / 2;
+    ad.material.onBeforeCompile = shader => {
+      shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', 'vec2 brandUV = vMapUv; if (!gl_FrontFacing) brandUV.x = 1.0 - brandUV.x; diffuseColor *= texture2D(map, brandUV);');
+    };
+    scene.add(ad);
+  }
 }
 
 function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
@@ -473,6 +509,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   // Cable-stayed pylons and fine cables at four cinematic spans.
   for (const fraction of [0.035, 0.28, 0.72, 0.92]) {
     const frame = roadFrame(routeLength * fraction);
+    cableBranding(frame, timeOfDay);
     if (pylonTemplate) {
       const pylon = pylonTemplate.clone(true); pylon.scale.setScalar(SCALE); pylon.position.copy(frame.point); pylon.position.y = 0.16; pylon.rotation.y = frame.yaw; scene.add(pylon);
     } else for (const side of [-1, 1]) {
@@ -544,7 +581,15 @@ function unlockEngineAudio() {
       filter.connect(gain);
       gain.connect(context.destination);
       oscillator.start();
-      engineAudio = { context, oscillator, filter, gain };
+      const wind = context.createBufferSource(), windFilter = context.createBiquadFilter(), windGain = context.createGain();
+      const buffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
+      const data = buffer.getChannelData(0); for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+      wind.buffer = buffer; wind.loop = true; windFilter.type = 'highpass'; windFilter.frequency.value = 700;
+      windGain.gain.value = 0; wind.connect(windFilter); windFilter.connect(windGain); windGain.connect(gain); wind.start();
+      const whine = context.createOscillator(), whineGain = context.createGain(), cues = context.createGain();
+      whine.type = 'sine'; whineGain.gain.value = 0; whine.connect(whineGain); whineGain.connect(gain); whine.start();
+      cues.gain.value = .1; cues.connect(context.destination);
+      engineAudio = { context, oscillator, filter, gain, wind, windGain, whine, whineGain, cues };
     }
     void engineAudio.context.resume().catch(() => {});
   } catch {
@@ -556,11 +601,14 @@ function updateEngineAudio(playerFrame, input) {
   if (!engineAudio) return;
   const { context, oscillator, filter, gain } = engineAudio;
   const active = !disposed && !paused && !race.finished && !document.hidden && !soundMuted;
-  const speedRatio = clamp(playerFrame.speed / MAX_SPEED, 0, 1.2);
+  const speedRatio = clamp(playerFrame.speed / MAX_SPEED, 0, 1.4);
   const throttle = active && input.accelerate ? 1 : 0;
   const now = context.currentTime;
   oscillator.frequency.setTargetAtTime(45 + speedRatio * 140 + throttle * 15, now, 0.05);
   filter.frequency.setTargetAtTime(350 + speedRatio * 1100, now, 0.05);
+  engineAudio.windGain.gain.setTargetAtTime(active ? speedRatio * .65 : 0, now, .1);
+  engineAudio.whine.frequency.setTargetAtTime(550 + speedRatio * 450, now, .08);
+  engineAudio.whineGain.gain.setTargetAtTime(active && race.player.boosting ? .45 : 0, now, .08);
   gain.gain.setTargetAtTime(active ? 0.025 + throttle * 0.025 : 0, now, 0.025);
 }
 
@@ -614,9 +662,23 @@ function playContactSound(speed) {
   voice.onended = () => { voice.disconnect(); gain.disconnect(); };
 }
 
+function playRaceCue(finish = false) {
+  if (!engineAudio || paused || soundMuted || document.hidden) return;
+  const { context, cues } = engineAudio; cues.gain.value = .1;
+  const notes = finish ? [392, 494, 587, 784] : [100, 120, 140, 180];
+  notes.forEach((frequency, i) => {
+    const voice = context.createOscillator(), envelope = context.createGain(), at = context.currentTime + i * .18;
+    voice.type = finish ? 'triangle' : 'sine'; voice.frequency.value = frequency;
+    envelope.gain.setValueAtTime(0, at); envelope.gain.linearRampToValueAtTime(.6, at + .015); envelope.gain.exponentialRampToValueAtTime(.001, at + .3);
+    voice.connect(envelope); envelope.connect(cues); voice.start(at); voice.stop(at + .32);
+    voice.onended = () => { voice.disconnect(); envelope.disconnect(); };
+  });
+}
+
 function silenceEngineAudio() {
   if (!engineAudio) return;
   const { context, gain } = engineAudio;
+  engineAudio.cues.gain.value = 0;
   gain.gain.cancelScheduledValues(context.currentTime);
   gain.gain.setTargetAtTime(0, context.currentTime, 0.015);
 }
@@ -680,6 +742,10 @@ function stepPosition() { return racePosition(race); }
 function updateCamera(playerFrame, dt) {
   const frame = roadFrame(routeLength * playerFrame.distance / race.length);
   const tallPhone = camera.aspect < 0.52;
+  const speed = clamp(playerFrame.speed / (250 / 3.6), 0, 1);
+  const desiredFov = reducedMotion ? 60 : 60 + speed * 9 + (race.player.boosting ? 3 : 0);
+  camera.fov = THREE.MathUtils.damp(camera.fov, desiredFov, 5, dt); camera.updateProjectionMatrix();
+  $('#speed-streaks').style.setProperty('--speed-intensity', reducedMotion ? 0 : Math.max(0, speed - .55) * (race.player.boosting ? .55 : .2));
 
   // Physics interpolation already smooths this pose; no extra camera follow lag.
   camera.position.copy(frame.point)
@@ -707,6 +773,11 @@ function tick(now) {
   raf = requestAnimationFrame(tick);
   const dt = lastFrame ? Math.max(0, Math.min((now - lastFrame) / 1000, 0.25)) : 0; lastFrame = now;
   visualTime += dt;
+  if (finishPresentation) { updateFinishPresentation(dt); return; }
+  if (intro.phase === 'racing') {
+    slowFrames = dt > .035 ? slowFrames + dt : Math.max(0, slowFrames - dt);
+    if (slowFrames > 2 && pixelRatio > 1) { pixelRatio = Math.max(1, pixelRatio - .2); renderer.setPixelRatio(pixelRatio); slowFrames = 0; }
+  }
   if (intro.phase !== 'racing') {
     const ready = advanceIntro(intro, dt);
     updateKart(kart, simulation.frame.player, dt, true);
@@ -714,9 +785,10 @@ function tick(now) {
     updateReflections(); ocean.material.uniforms.time.value += dt;
     updateCamera(simulation.frame.player, dt);
     const start = roadFrame(0), t = intro.progress * intro.progress * (3 - 2 * intro.progress);
-    const aerial = start.point.clone().addScaledVector(start.tangent, 18).addScaledVector(start.right, 10).add(new THREE.Vector3(0, 20, 0));
+    const firstSpan = roadFrame(routeLength * .035);
+    const aerial = firstSpan.point.clone().addScaledVector(firstSpan.tangent, 18).addScaledVector(firstSpan.right, 76).add(new THREE.Vector3(0, 18, 0));
     camera.position.lerpVectors(aerial, camera.position.clone(), t);
-    cameraTarget.lerpVectors(start.point.clone().addScaledVector(start.tangent, 8), cameraTarget.clone(), t);
+    cameraTarget.lerpVectors(firstSpan.point.clone().addScaledVector(firstSpan.tangent, 18).add(new THREE.Vector3(0, 9, 0)), cameraTarget.clone(), t);
     camera.lookAt(cameraTarget);
     scene.userData.kartFill.position.copy(camera.position).add(new THREE.Vector3(0, 2, 0));
     $('#intro-label').textContent = intro.phase === 'flyover' ? 'BANDRA TOLL PLAZA' : ready ? 'GO' : String(intro.count);
@@ -730,6 +802,9 @@ function tick(now) {
   const input = controls();
   const result = advanceSimulation(simulation, race, input, dt);
   updateEngineAudio(result.frame.player, input);
+  if (!finalPush && !race.finished && race.length - race.player.distance <= 300) {
+    finalPush = true; showEvent('FINAL PUSH · 300 m'); playRaceCue();
+  }
   for (const lamp of kart.userData.lamps ?? []) lamp.emissiveIntensity = input.brake ? 2.5 : 0.7;
   updateKart(kart, result.frame.player, dt, true);
   result.frame.rivals.forEach((rivalFrame, i) => updateKart(rivals[i], rivalFrame, dt));
@@ -757,11 +832,44 @@ function tick(now) {
 }
 
 function finishRace() {
-  silenceEngineAudio();
-  clearControls();
-  const position = stepPosition(); $('#finish-title').textContent = position === 1 ? 'You won the Sea Link.' : `You finished ${position}${position === 2 ? 'nd' : position === 3 ? 'rd' : 'th'}.`;
-  $('#finish-copy').textContent = `Bandra to Worli · ${race.elapsed.toFixed(1)} seconds · ${race.rivals.length + 1} racers`;
+  silenceEngineAudio(); clearControls();
+  finishPresentation = createFinish(race, stepPosition());
+  finishPresentation.rivals = simulation.frame.rivals.map(r => ({ ...r }));
+  finishPresentation.cameraPosition = camera.position.clone(); finishPresentation.cameraTarget = cameraTarget.clone();
+  $('#finish-moment').textContent = finishPresentation.position === 1 ? 'VICTORY' : 'FINISH';
+  $('#finish-cinematic').hidden = false; $('#game-view').classList.add('finishing');
+  $('#event-banner').classList.remove('visible'); $('#speed-streaks').style.setProperty('--speed-intensity', 0);
+  playRaceCue(true);
+  if (reducedMotion) finishPresentation.elapsed = finishPresentation.duration;
+}
+
+function showFinishResults() {
+  const f = finishPresentation; if (!f) return;
+  $('#finish-cinematic').hidden = true;
+  $('#finish-title').textContent = f.position === 1 ? 'You won the Sea Link.' : `Finished ${f.position} / ${race.rivals.length + 1}`;
+  $('#finish-copy').textContent = `Bandra to Worli · ${f.time.toFixed(2)} seconds · ${f.overtakes} overtakes`;
   $('#finish-overlay').hidden = false;
+}
+
+function updateFinishPresentation(dt) {
+  const f = finishPresentation, state = advanceFinish(f, dt), end = roadFrame(routeLength);
+  updateKart(kart, { distance: f.distance, lane: f.lane, lateralSpeed: 0 }, dt, true);
+  kart.position.addScaledVector(end.tangent, state.coast);
+  for (const wheel of kart.userData.wheels) wheel.rotation.x -= state.coast / (.35 * kart.scale.x);
+  f.rivals.forEach((r, i) => updateKart(rivals[i], { ...r, distance: r.distance + Math.min(20, r.speed * .16 * f.elapsed) }, dt));
+  const head = kart.userData.driver?.[1];
+  if (head) head.rotation.x = f.position === 1 ? -.08 * Math.sin(state.progress * Math.PI) : .07 * Math.sin(state.progress * Math.PI);
+  const target = kart.position.clone().add(new THREE.Vector3(0, .55, 0));
+  const desired = kart.position.clone().addScaledVector(end.tangent, -2.4).addScaledVector(end.right, 2.2).add(new THREE.Vector3(0, 1.6, 0));
+  const t = reducedMotion ? 0 : state.progress * state.progress * (3 - 2 * state.progress);
+  camera.position.lerpVectors(f.cameraPosition, desired, t); cameraTarget.lerpVectors(f.cameraTarget, target, t); camera.lookAt(cameraTarget);
+  scene.userData.kartFill.position.copy(camera.position).add(new THREE.Vector3(0, 2, 0));
+  updateWeather(dt); updateContactSparks(dt);
+  const shadow = scene.userData.shadowTransform;
+  shadow.position.copy(kart.position); shadow.position.y = .18; shadow.rotation.set(0, end.yaw, 0); shadow.scale.set(1, 1, 1); shadow.updateMatrix();
+  scene.userData.contactShadows.setMatrixAt(0, shadow.matrix); scene.userData.contactShadows.instanceMatrix.needsUpdate = true;
+  renderer.render(scene, camera);
+  if (state.done) { showFinishResults(); cancelAnimationFrame(raf); }
 }
 
 function clearControls() {
@@ -772,7 +880,7 @@ function clearControls() {
 function keyDown(event) { if (disposed) return; const key = keys[event.code]; if (key) { unlockEngineAudio(); held.add(key); event.preventDefault(); } if (event.code === 'Escape') pause(true); }
 function keyUp(event) { if (disposed) return; const key = keys[event.code]; if (key) { held.delete(key); event.preventDefault(); } }
 function pause(value) {
-  if (disposed || race.finished) return;
+  if (disposed) return;
   paused = value; $('#pause-overlay').hidden = !value;
   if (value) { silenceEngineAudio(); clearControls(); cancelAnimationFrame(raf); }
   else { lastFrame = 0; raf = requestAnimationFrame(tick); }
@@ -788,6 +896,15 @@ function bindUi() {
     const end = (event) => { event.preventDefault(); held.delete(button.dataset.control); button.classList.remove('pressed'); };
     button.addEventListener('pointerdown', start); button.addEventListener('pointerup', end); button.addEventListener('pointercancel', end); button.addEventListener('lostpointercapture', end);
   });
+  $('#rain-helmet').addEventListener('click', () => {
+    if (paused || disposed || race.finished || !kart.userData.helmet) return;
+    helmetEquipped = true; kart.userData.helmet.visible = true;
+    kart.userData.driver[1].traverse(part => { if (/hair/i.test(part.name)) part.visible = false; });
+    $('#rain-helmet').classList.remove('prompt'); $('#rain-helmet').setAttribute('aria-pressed', 'true');
+    $('#rain-helmet').setAttribute('aria-label', 'Rain helmet equipped');
+    showEvent('Helmet on');
+  });
+  $('#skip-finish').addEventListener('click', () => { if (finishPresentation) { finishPresentation.elapsed = finishPresentation.duration; showFinishResults(); cancelAnimationFrame(raf); } });
   $('#skip-intro').addEventListener('click', () => { skipIntro(intro); });
   $('#pause-race').addEventListener('click', () => pause(true)); $('#resume-race').addEventListener('click', () => { unlockEngineAudio(); pause(false); });
   $('#exit-race').addEventListener('click', leave); $('#finish-exit').addEventListener('click', leave);
@@ -812,7 +929,11 @@ function dispose() {
 }
 
 async function start(config, retry = false) {
-  dispose(); disposed = false; paused = false; visualTime = 0; intro = createIntro(retry || window.matchMedia('(prefers-reduced-motion: reduce)').matches); raceConfig = config; lastFrame = 0; lastUi = 0; shake = 0;
+  dispose(); finishPresentation = null; finalPush = false; helmetEquipped = false; helmetPrompted = false; slowFrames = 0;
+  reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  $('#rain-helmet').hidden = true; $('#rain-helmet').classList.remove('prompt'); $('#rain-helmet').setAttribute('aria-pressed', 'false');
+  $('#finish-cinematic').hidden = true; $('#game-view').classList.remove('finishing');
+  disposed = false; paused = false; visualTime = 0; intro = createIntro(retry || window.matchMedia('(prefers-reduced-motion: reduce)').matches); raceConfig = config; lastFrame = 0; lastUi = 0; shake = 0;
   $('#pause-overlay').hidden = true; $('#finish-overlay').hidden = true; $('#event-banner').classList.remove('visible'); window.clearTimeout(eventTimeout);
   const loader = new GLTFLoader();
   const model = (path) => loader.loadAsync(path).then((asset) => asset.scene).catch((error) => { console.warn(`${path} unavailable; using the lightweight fallback.`, error); return null; });
@@ -845,7 +966,7 @@ async function start(config, retry = false) {
   simulation = createSimulation(race);
   minimap = makeMinimap(); reflections = makeRoadReflections();
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6)); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
+  pixelRatio = Math.min(window.devicePixelRatio || 1, 1.6); renderer.setPixelRatio(pixelRatio); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
   // Filter the static sky once for PBR reflections, with no per-frame reflection pass.
   const pmrem = new THREE.PMREMGenerator(renderer);
   const environment = pmrem.fromEquirectangular(scene.background);
