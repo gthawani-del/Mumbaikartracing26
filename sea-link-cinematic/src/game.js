@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { createWeatherState, advanceWeather } from './weather-state.js';
+import { createOcean, createBoostEffects, updateBoostEffects } from './race-effects.js';
 import { createSkyTexture, createWetSurfaceMaps } from './environment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createRace, racePosition, clamp, MAX_SPEED } from './race-logic.js';
@@ -13,7 +15,7 @@ const held = new Set();
 const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'accelerate', KeyW: 'accelerate', Space: 'accelerate', ArrowDown: 'brake', KeyS: 'brake', ShiftLeft: 'drift', ShiftRight: 'drift', KeyE: 'boost' };
 let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], weather, reflections, minimap, raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
 let disposed = false, paused = false;
-let simulation;
+let simulation, ocean, boostEffects;
 let engineAudio = null;
 let soundMuted = false;
 
@@ -38,27 +40,6 @@ function asphaltTexture() {
   context.putImageData(pixels, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
-  return texture;
-}
-
-function seaTexture() {
-  const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
-  const context = canvas.getContext('2d');
-  context.fillStyle = '#536d78'; context.fillRect(0, 0, 256, 256);
-  let seed = 42;
-  for (let i = 0; i < 520; i++) {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    const x = (seed >>> 16) & 255;
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    const y = (seed >>> 16) & 255;
-    context.fillStyle = i % 3 ? 'rgba(178,203,207,0.055)' : 'rgba(23,48,62,0.09)';
-    context.fillRect(x, y, 4 + (seed & 31), 1);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(24, 28);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
   return texture;
 }
 
@@ -192,17 +173,17 @@ function makeMinimap() {
 
 function makeWeather() {
   // Two draw calls, reused buffers: camera-local rain and world-space tyre spray.
-  const rainPositions = new Float32Array(110 * 6);
+  const rainPositions = new Float32Array(700 * 6);
   const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3).setUsage(THREE.DynamicDrawUsage));
   const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: '#cbd8e2', transparent: true, opacity: 0.22, depthWrite: false, fog: false }));
   rain.frustumCulled = false; camera.add(rain); scene.add(camera);
-  const drops = Array.from({ length: 110 }, () => ({ x: (Math.random() - 0.5) * 14, y: (Math.random() - 0.5) * 8, z: -2 - Math.random() * 13 }));
+  const drops = Array.from({ length: 700 }, () => ({ x: (Math.random() - 0.5) * 14, y: (Math.random() - 0.5) * 8, z: -2 - Math.random() * 13 }));
   const sprayPositions = new Float32Array(80 * 3);
   for (let i = 0; i < 80; i++) sprayPositions[i * 3 + 1] = -100;
   const sprayGeo = new THREE.BufferGeometry(); sprayGeo.setAttribute('position', new THREE.BufferAttribute(sprayPositions, 3).setUsage(THREE.DynamicDrawUsage));
   const spray = new THREE.Points(sprayGeo, new THREE.PointsMaterial({ map: sprayTexture(), color: '#d2dfe5', size: 0.12, transparent: true, opacity: 0.7, depthWrite: false, sizeAttenuation: true }));
   spray.frustumCulled = false; scene.add(spray);
-  return { rain, rainGeo, rainPositions, drops, spray, sprayGeo, sprayPositions, particles: [], cursor: 0 };
+  return { state: createWeatherState(), sprayBudget: 0, rain, rainGeo, rainPositions, drops, spray, sprayGeo, sprayPositions, particles: [], cursor: 0 };
 }
 
 function makeRoadReflections() {
@@ -222,7 +203,19 @@ function makeRoadReflections() {
     marker.scale.set(0.45 + (i % 5) * 0.2, 0.5 + (i % 4) * 0.25, 1); marker.updateMatrix();
     ribbons.setMatrixAt(i, marker.matrix);
   }
-  scene.add(ribbons);
+  scene.add(ribbons); scene.userData.wetRibbons = ribbons;
+  const puddles = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.2, 5).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({
+    map: sprayTexture(), color: '#34495b', roughness: 0.08, metalness: 0.3,
+    transparent: true, opacity: 0.2, depthWrite: false, envMapIntensity: 1.5,
+  }), 210);
+  for (let i = 0; i < 210; i++) {
+    const frame = roadFrame(routeLength * (i + .5) / 210);
+    marker.position.copy(frame.point).addScaledVector(frame.right, Math.sin(i * 11) * 1.1);
+    marker.position.y = .188; marker.rotation.set(0, frame.yaw, 0);
+    marker.scale.set(.65 + (i % 3) * .2, 1, .5 + (i % 4) * .3); marker.updateMatrix();
+    puddles.setMatrixAt(i, marker.matrix);
+  }
+  scene.add(puddles); scene.userData.puddles = puddles;
   const texture = lampReflectionTexture();
   const colors = ['#f23c35', '#41a2ff', '#ffb238', '#48d29c', '#cc7bed', '#f85e71', '#44cbd6', '#ee5ca6'];
   const racers = [race.player, ...race.rivals].flatMap((_, i) => [-1, 1].map((side) => {
@@ -249,22 +242,43 @@ function updateReflections() {
     mesh.position.copy(frame.point).addScaledVector(frame.right, racer.lane * SCALE + mesh.userData.side * 0.22).addScaledVector(frame.tangent, -0.75);
     mesh.position.y = 0.204;
     mesh.rotation.y = frame.yaw;
-    mesh.material.opacity = Math.min(0.48, 0.16 + racer.speed / 120);
+    mesh.material.opacity = (0.15 + (weather?.state.wetness ?? 0.35) * 0.5) * Math.min(1, 0.4 + racer.speed / 80);
   });
 }
 
 function updateWeather(dt) {
   if (!weather) return;
+  const changed = advanceWeather(weather.state, dt);
+  const { rain, wetness } = weather.state;
+  if (changed) showEvent(weather.state.heavy ? 'Heavy coastal shower — visibility reduced' : 'Rain easing — road still wet');
+  const label = rain > 0.65 ? 'HEAVY RAIN' : rain > 0.3 ? 'RAIN' : 'LIGHT RAIN';
+  if ($('#weather-status').textContent !== label) $('#weather-status').textContent = label;
+  scene.backgroundIntensity = 1 - rain * .25;
+  scene.environmentIntensity = 1 - rain * .2;
+  weather.rainGeo.setDrawRange(0, Math.round(70 + rain * 630) * 2);
+  weather.rain.material.opacity = 0.16 + rain * 0.32;
+  materials.asphalt.roughness = 0.65 - wetness * 0.43;
+  materials.asphalt.envMapIntensity = 0.7 + wetness * 1.4;
+  materials.asphalt.color.setRGB(0.65 - wetness * .25, 0.74 - wetness * .25, 0.82 - wetness * .25);
+  scene.userData.puddles.material.opacity = wetness * .65;
+  scene.userData.wetRibbons.material.opacity = 0.07 + wetness * 0.35;
+  scene.userData.lampReflections.material.opacity = 0.25 + wetness * 0.65;
+  scene.fog.far = 430 - rain * 180;
+  weather.spray.material.opacity = 0.3 + wetness * 0.55;
+  weather.spray.material.size = 0.09 + wetness * 0.12;
+  ocean.material.uniforms.time.value += dt;
   weather.drops.forEach((drop, i) => {
-    drop.y -= dt * 12; drop.x -= dt * 2;
+    drop.y -= dt * (12 + rain * 12); drop.x -= dt * (2 + rain * 4);
     if (drop.y < -4.5 || drop.x < -7) { drop.y = 4.5; drop.x = (Math.random() - 0.5) * 14; }
     const offset = i * 6, buffer = weather.rainPositions;
     buffer[offset] = drop.x; buffer[offset + 1] = drop.y; buffer[offset + 2] = drop.z;
-    buffer[offset + 3] = drop.x + 0.09; buffer[offset + 4] = drop.y + 0.34; buffer[offset + 5] = drop.z;
+    buffer[offset + 3] = drop.x + 0.09 + rain * .1; buffer[offset + 4] = drop.y + 0.34 + rain * .3; buffer[offset + 5] = drop.z;
   });
   weather.rainGeo.attributes.position.needsUpdate = true;
   const frame = roadFrame(routeLength * simulation.frame.player.distance / race.length);
-  if (race.player.speed > 10) for (const side of [-1, 1]) {
+  weather.sprayBudget = Math.min(4, weather.sprayBudget + dt * (12 + wetness * 60));
+  const sprayBursts = Math.floor(weather.sprayBudget); weather.sprayBudget -= sprayBursts;
+  if (race.player.speed > 10) for (let burst = 0; burst < sprayBursts; burst++) for (const side of [-1, 1]) {
     const particle = weather.particles[weather.cursor] ?? {};
     particle.position = kart.position.clone().addScaledVector(frame.right, side * 0.36).addScaledVector(frame.tangent, -0.33);
     particle.position.y = 0.27;
@@ -339,6 +353,10 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   }
   const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
   materials.asphalt.map = asphalt ?? asphaltTexture();
+  // Neutralise the warm source texture so wet asphalt reads as slate, not dirt.
+  materials.asphalt.onBeforeCompile = shader => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor.rgb = vec3(dot(diffuseColor.rgb, vec3(.2126,.7152,.0722))) * vec3(.7,.84,1.);');
+  };
   const wetMaps = createWetSurfaceMaps();
   materials.asphalt.color.set('#64768a');
   materials.asphalt.roughness = 0.55; materials.asphalt.roughnessMap = wetMaps.roughness;
@@ -346,7 +364,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   materials.asphalt.envMapIntensity = 0.85;
   materials.asphalt.metalness = 0.02; materials.asphalt.needsUpdate = true;
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ map: seaTexture(), roughness: 0.46, metalness: 0.16, side: THREE.DoubleSide })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
+  ocean = createOcean(scene, curve);
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
   const checks = new THREE.InstancedMesh(new THREE.PlaneGeometry(ROAD_HALF / 4, 0.4).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#f3eee3', roughness: 0.55, polygonOffset: true, polygonOffsetFactor: -2 }), 16);
   const checkPose = new THREE.Object3D(); let checkCount = 0;
@@ -432,6 +450,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   }
   centerMarks.count = markerCount; lampPole.count = lampArm.count = lampBulb.count = glow.count = reflections.count = lightCount;
   scene.add(centerMarks, lampPole, lampArm, lampBulb, glow, reflections);
+  scene.userData.lampReflections = reflections;
   // Route signs sit near the bridge approaches, where overhead guidance belongs.
   for (const [fraction, title, subtitle] of [[0.11, 'BANDRA - WORLI SEA LINK', 'WORLI  ↑'], [0.86, 'WORLI APPROACH', 'KEEP TO YOUR LANE  ↑']]) {
     const frame = roadFrame(routeLength * fraction);
@@ -441,8 +460,8 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
       post.position.set(side * (ROAD_HALF + 0.62), 1.9, 0); gantry.add(post);
     }
     const crossbar = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.12, 0.12), materials.rail); crossbar.position.y = 3.75; gantry.add(crossbar);
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.45, 0.84), new THREE.MeshBasicMaterial({ map: roadSignTexture(title, subtitle), side: THREE.DoubleSide }));
-    sign.position.set(0, 3.37, 0.09); gantry.add(sign); scene.add(gantry);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.45, 0.84), new THREE.MeshBasicMaterial({ map: roadSignTexture(title, subtitle) }));
+    sign.rotation.y = Math.PI; sign.position.set(0, 3.37, -0.09); gantry.add(sign); scene.add(gantry);
   }
   // Cable-stayed pylons and fine cables at four cinematic spans.
   for (const fraction of [0.035, 0.28, 0.72, 0.92]) {
@@ -499,7 +518,7 @@ function showEvent(message) {
   const banner = $('#event-banner'); banner.textContent = message; banner.classList.add('visible'); window.clearTimeout(eventTimeout); eventTimeout = window.setTimeout(() => banner.classList.remove('visible'), 2400);
 }
 
-// Base (126 km/h) and boost (162 km/h) limits live in race-logic.js.
+// Base (180 km/h) and boost (230 km/h) limits live in race-logic.js.
 function unlockEngineAudio() {
   const Context = window.AudioContext || window.webkitAudioContext;
   if (!Context || disposed) return;
@@ -624,6 +643,8 @@ function tick(now) {
   updateKart(kart, result.frame.player, dt, true);
   result.frame.rivals.forEach((rivalFrame, i) => updateKart(rivals[i], rivalFrame, dt));
   updateReflections(); updateWeather(dt);
+  updateBoostEffects(boostEffects, race.player.boosting && !race.finished, dt,
+    roadFrame(routeLength * result.frame.player.distance / race.length), kart, weather.state.wetness);
   // Late camera phase follows the exact same interpolated state as the models.
   updateCamera(result.frame.player, dt);
   renderer.render(scene, camera); renderHud(now);
@@ -719,7 +740,7 @@ async function start(config) {
   pmrem.dispose();
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
-  weather = makeWeather();
+  weather = makeWeather(); boostEffects = createBoostEffects(kart, scene);
   const start = roadFrame(0); const tallPhone = camera.aspect < 0.52;
   camera.position.copy(start.point).addScaledVector(start.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
   bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';

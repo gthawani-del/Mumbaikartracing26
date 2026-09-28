@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRace } from './race-logic.js';
+import { createRace, MAX_SPEED } from './race-logic.js';
 import { createSimulation, advanceSimulation, FIXED_DT } from './simulation.js';
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`);
 
@@ -22,13 +22,13 @@ test('30, 60, 120 Hz and uneven frames produce identical physics', () => {
 
 test('120 Hz rendering advances smoothly between 60 Hz physics steps at top speed', () => {
   const race = createRace({ length: 5000, rivals: 0 });
-  race.player.speed = 35;
+  race.player.speed = MAX_SPEED;
   const simulation = createSimulation(race);
   advanceSimulation(simulation, race, { accelerate: true }, FIXED_DT);
   let previous = simulation.frame.player.distance;
   for (let i = 0; i < 120; i++) {
     const { frame } = advanceSimulation(simulation, race, { accelerate: true }, 1 / 120);
-    near(frame.player.distance - previous, 35 / 120);
+    near(frame.player.distance - previous, MAX_SPEED / 120);
     previous = frame.player.distance;
   }
 });
@@ -45,7 +45,7 @@ test('a dropped frame catches up in fixed steps and retains its fractional remai
 
 test('finish is rendered exactly and emits its event only once', () => {
   const race = createRace({ length: 5, rivals: 0 });
-  race.player.distance = 4.9; race.player.speed = 35;
+  race.player.distance = 4.9; race.player.speed = MAX_SPEED;
   const simulation = createSimulation(race);
   const result = advanceSimulation(simulation, race, {}, 0.1);
   assert.equal(result.frame.player.distance, 5);

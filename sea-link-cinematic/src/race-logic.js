@@ -1,10 +1,10 @@
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // Speeds are metres per second; HUD converts to km/h.
-export const MAX_SPEED = 126 / 3.6;
-export const BOOST_MAX_SPEED = 162 / 3.6;
+export const MAX_SPEED = 180 / 3.6;
+export const BOOST_MAX_SPEED = 230 / 3.6;
 const LANE_LIMIT_METERS = 6.5;
 
-const DIFFICULTY_PACE = { Easy: 29, Medium: 33, Hard: 37 };
+const DIFFICULTY_PACE = { Easy: 42, Medium: 47, Hard: 53 };
 
 export function createRace({ length, rivals = 7, difficulty = 'Medium', events = [] }) {
   if (!Number.isFinite(length) || length <= 0) throw new Error('Race length must be positive.');
@@ -22,7 +22,7 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
     eventsEnabled: new Set(events),
     eventState: { windFired: false, gateFired: false, windTime: 0, windSide: 1 },
     sectors: [null, null],
-    player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, charge: 0.65, boostTime: 0, impacts: 0, finishTime: null },
+    player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, boosting: false, charge: 0.65, boostTime: 0, impacts: 0, finishTime: null },
     rivals: Array.from({ length: rivals }, (_, index) => ({
       distance: grid[index]?.distance ?? 48 + (index - grid.length + 1) * 9,
       lane: grid[index]?.lane ?? (index % 2 ? 4.2 : -4.2),
@@ -40,6 +40,7 @@ export function stepRace(race, input, elapsed) {
   const dt = clamp(elapsed, 0, 0.05);
   const player = race.player;
   const previousDistance = player.distance;
+  const previousLane = player.lane;
   const messages = [];
   race.elapsed += dt;
 
@@ -47,12 +48,15 @@ export function stepRace(race, input, elapsed) {
   const steer = Number(Boolean(input.right)) - Number(Boolean(input.left));
   const drifting = Boolean(input.drift) && steer !== 0 && player.speed > 8;
   const manualBoost = Boolean(input.boost) && player.charge > 0.01 && player.speed > 4 && !input.brake;
-  const gateBoost = player.boostTime > 0;
+  const gateBoost = player.boostTime > 0 && !input.brake;
   const boosting = manualBoost || gateBoost;
+  player.boosting = boosting;
   const topSpeed = boosting ? BOOST_MAX_SPEED : MAX_SPEED;
 
-  if (input.brake) player.speed = Math.max(0, player.speed - 31 * dt);
-  else if (input.accelerate) player.speed = Math.min(topSpeed, player.speed + (boosting ? 27 : 21) * dt);
+  if (input.brake) player.speed = Math.max(0, player.speed - 42 * dt);
+  else if (input.accelerate) player.speed = player.speed > topSpeed
+    ? Math.max(topSpeed, player.speed - 12 * dt)
+    : Math.min(topSpeed, player.speed + (boosting ? 32 : 23) * dt);
   else player.speed = Math.max(0, player.speed - 3.2 * dt);
   if (manualBoost) player.charge = Math.max(0, player.charge - 0.42 * dt);
   else if (drifting) player.charge = Math.min(1, player.charge + 0.3 * dt);
@@ -106,12 +110,18 @@ export function stepRace(race, input, elapsed) {
   for (const rival of race.rivals) {
     if (rival.finished) continue;
     const prior = rival.distance;
-    rival.speed = Math.min(rival.pace, rival.speed + 14 * dt);
+    rival.speed = Math.min(rival.pace, rival.speed + 21 * dt);
     rival.distance = Math.min(race.length, rival.distance + rival.speed * dt);
     rival.lane = rival.baseLane + Math.sin(race.elapsed * 0.5 + prior * 0.04) * 0.14;
     rival.finished = rival.distance >= race.length;
     if (rival.finished) rival.finishTime = race.elapsed - dt + (race.length - prior) / rival.speed;
-    if (Math.abs(rival.distance - player.distance) < 3.2 && Math.abs(rival.lane - player.lane) < 1.35) {
+    // Sweep relative separation across the step, so fast overtakes cannot tunnel.
+    const from = previousDistance - prior;
+    const to = player.distance - rival.distance;
+    const closest = Math.abs(to - from) > 1e-8 ? clamp(-from / (to - from), 0, 1) : 1;
+    const gap = from + (to - from) * closest;
+    const laneAtContact = previousLane + (player.lane - previousLane) * closest;
+    if (Math.abs(gap) < 3.2 && Math.abs(rival.lane - laneAtContact) < 1.35) {
       player.speed = Math.max(0, player.speed - 7 * dt);
       player.lateralSpeed += Math.sign(player.lane - rival.lane || 1) * 0.5;
       collision = true;
@@ -121,6 +131,7 @@ export function stepRace(race, input, elapsed) {
 
   if (player.distance >= race.length) {
     race.finished = true;
+    player.boosting = false;
     player.finishTime = race.elapsed - dt + (race.length - previousDistance) / player.speed;
     if (race.sectors[1] === null) race.sectors[1] = race.elapsed;
     messages.push({ type: 'finish', text: 'Finish!' });

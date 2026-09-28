@@ -73,3 +73,27 @@ test('a rival who crosses the finish first stays ahead of the player', () => {
   assert.ok(race.rivals[0].finishTime < race.player.finishTime);
   assert.equal(racePosition(race), 4);
 });
+
+test('180 km/h base and 230 km/h boost are reachable, with gradual boost recovery', () => {
+  const race = createRace({ length: 10000, rivals: 0 });
+  for (let i = 0; i < 240; i++) stepRace(race, { accelerate: true }, 1 / 60);
+  assert.ok(Math.abs(race.player.speed * 3.6 - 180) < 1e-8);
+  for (let i = 0; i < 40; i++) stepRace(race, { accelerate: true, boost: true }, 1 / 60);
+  assert.ok(Math.abs(race.player.speed * 3.6 - 230) < 1e-8);
+  assert.ok(race.player.boosting);
+  const before = race.player.speed;
+  stepRace(race, { accelerate: true }, 1 / 60);
+  assert.ok(before - race.player.speed < 0.3);
+  assert.equal(race.player.boosting, false);
+  stepRace(race, { brake: true, boost: true }, 1 / 60);
+  assert.equal(race.player.boosting, false);
+});
+
+test('a fast step crossing a rival still registers contact', () => {
+  const race = createRace({ length: 10000, rivals: 1 });
+  race.player.distance = 0; race.player.lane = race.rivals[0].lane;
+  race.player.speed = 400;
+  const result = stepRace(race, {}, 0.05);
+  assert.ok(result.collision);
+  assert.ok(result.events.some(e => e.type === 'rival'));
+});
