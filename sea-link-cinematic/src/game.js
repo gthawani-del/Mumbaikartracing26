@@ -119,32 +119,19 @@ function makeKart(color = '#a63e35') {
   return group;
 }
 
-function modelKart(template, color, number = 0) {
-  const object = template.clone(true);
+function modelKart(template, color) {
+  // The presentation camera and lights stay outside the portable asset root.
+  const object = (template.getObjectByName('KartRoot') ?? template).clone(true);
   const wheels = [];
   object.traverse((part) => {
     if (/^Wheel(?:Front|Rear)[LR]$/.test(part.name)) wheels.push(part);
     if (!part.isMesh || !color) return;
-    if (part.material.name === 'Crimson paint' || part.material.name === 'Fairing highlight') {
+    if (/^Crimson paint(?:\.\d+)?$/.test(part.material.name)) {
       part.material = part.material.clone();
       part.material.color.set(color);
     }
   });
   object.userData.wheels = wheels;
-  // These details remain separate from the imported hero mesh so the wheels still rotate.
-  for (const name of ['WheelRearL', 'WheelRearR']) object.getObjectByName(name)?.scale.setScalar(1.16);
-  const plate = document.createElement('canvas'); plate.width = 256; plate.height = 128;
-  const ctx = plate.getContext('2d'); ctx.fillStyle = '#dfa746'; ctx.fillRect(0, 0, 256, 128);
-  ctx.strokeStyle = '#392c28'; ctx.lineWidth = 9; ctx.strokeRect(5, 5, 246, 118);
-  ctx.fillStyle = '#201b1c'; ctx.textAlign = 'center'; ctx.font = 'bold 38px sans-serif'; ctx.fillText(number ? `RACER ${number}` : 'MUMBAI', 128, 55);
-  ctx.fillText(number ? 'SEA LINK' : 'RACER', 128, 101);
-  const plateMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.27), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(plate), side: THREE.DoubleSide }));
-  plateMesh.position.set(0, 0.56, -1.43); plateMesh.rotation.y = Math.PI; object.add(plateMesh);
-  const brakeLights = new THREE.MeshBasicMaterial({ color: color ?? '#ff3828' });
-  for (const side of [-1, 1]) {
-    const light = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), brakeLights);
-    light.position.set(side * 0.59, 0.51, -1.31); object.add(light);
-  }
   object.scale.setScalar(KART_SCALE);
   return object;
 }
@@ -452,12 +439,14 @@ function controls() {
   return input;
 }
 
-function updateKart(object, distance, lane, dt, playerKart = false) {
+function updateKart(object, distance, lane, dt, speed, playerKart = false) {
   const frame = roadFrame(routeLength * distance / race.length); const target = frame.point.clone().addScaledVector(frame.right, lane * SCALE);
   object.position.set(target.x, 0.16, target.z); object.rotation.y = frame.yaw;
+  for (const wheel of object.userData.wheels) {
+    const radius = wheel.name.includes('Rear') ? 0.35 : 0.30;
+    wheel.rotation.x -= speed * SCALE * dt / (radius * object.scale.x);
+  }
   if (playerKart) {
-    object.position.y += Math.sin(performance.now() * 0.012) * 0.004;
-    for (const wheel of object.userData.wheels) wheel.rotation.x -= race.player.speed * dt / 0.32;
     object.rotation.z = THREE.MathUtils.damp(object.rotation.z, -race.player.lateralSpeed * 0.018, 7, dt);
   }
 }
@@ -483,8 +472,8 @@ function tick(now) {
   raf = requestAnimationFrame(tick);
   const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.25) : 1 / 60; lastFrame = now;
   const result = advanceRace(race, controls(), dt);
-  updateKart(kart, race.player.distance, race.player.lane, dt, true);
-  race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
+  updateKart(kart, race.player.distance, race.player.lane, dt, race.player.speed, true);
+  race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt, rival.speed));
   updateReflections(); updateWeather(dt);
   const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.2).addScaledVector(frame.right, race.player.lane * SCALE * 0.35); look.y += 0.9;
   const tallPhone = camera.aspect < 0.52;
@@ -493,6 +482,7 @@ function tick(now) {
   if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
   const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
   scene.userData.skyDome.position.copy(camera.position);
+  scene.userData.kartFill.position.copy(camera.position).add(new THREE.Vector3(0, 2, 0));
   renderer.render(scene, camera); renderHud(now);
   if (result.collision) shake = Math.max(shake, 0.25 + race.player.speed * 0.006);
   for (const event of result.events) {
@@ -562,8 +552,10 @@ async function start(config) {
   if (fabric) { materials.shirt.map = fabric; materials.shirt.color.set('#e5e5e5'); materials.shirt.needsUpdate = true; }
   makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate, asphalt, concrete, config.timeOfDay);
   kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
+  const kartFill = new THREE.DirectionalLight(0xd9e6ff, 1.15);
+  kartFill.target = kart; scene.add(kartFill); scene.userData.kartFill = kartFill;
   const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
-  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length], index + 1) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
+  rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
   race = createRace({ length: routeMeters, rivals: config.rivals, difficulty: config.difficulty, events: config.events });
   minimap = makeMinimap(); reflections = makeRoadReflections();
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
