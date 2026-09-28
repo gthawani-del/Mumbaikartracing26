@@ -218,7 +218,21 @@ if label:
                 point.y=cy+ry*math.sqrt(max(0,1-(point.x/rx)**2))+.009
                 vertex.co=inv @ point
                 break
-for parent in [root]+[o for o in root.children if o.name.startswith('Wheel')]:
+# Preserve semantic pivots for restrained runtime driver animation.
+def pivot(name, loc, parent):
+    p=bpy.data.objects.new(name,None);bpy.context.scene.collection.objects.link(p);p.parent=parent;p.location=loc
+    bpy.context.view_layer.update();return p
+def reparent(o,p):
+    world=o.matrix_world.copy();o.parent=p;o.matrix_world=world
+body=pivot('DriverTorso',(0,.1,.78),root)
+headpivot=pivot('DriverHead',(0,-.16,.61),body)
+hands=pivot('DriverHands',(0,-.7,.22),body)
+for o in list(root.children):
+    if o.type!='MESH':continue
+    if o.name.startswith(('Adult head','Ear','Short tapered hair','Swept hair relief','Nose')):reparent(o,headpivot)
+    elif o.name.startswith(('Forearm','Hand on wheel','Steering rim','Steering spoke')):reparent(o,hands)
+    elif o.name.startswith(('Adult fitted shirt','Driver neck','Upper arm','Elbow','Shoulder sewn seam','Shirt waist fold','Driver back identity')):reparent(o,body)
+for parent in [root,body,headpivot,hands]+[o for o in root.children if o.name.startswith('Wheel')]:
     groups={}
     for o in list(parent.children):
         if o.type=='MESH':groups.setdefault(o.data.materials[0].name,[]).append(o)
@@ -228,6 +242,32 @@ for parent in [root]+[o for o in root.children if o.name.startswith('Wheel')]:
         bpy.context.view_layer.objects.active=objects[0]
         if len(objects)>1:bpy.ops.object.join()
         bpy.context.object.name=parent.name+' '+name
+
+# Modular toll plaza, separate portable root. Booths stay outside racing lanes.
+toll=bpy.data.objects.new('TollPlazaRoot',None);bpy.context.scene.collection.objects.link(toll)
+concrete=material('Toll concrete',(.42,.45,.43),.85)
+green=material('Toll canopy green',(.025,.16,.12),.38,.25)
+glass=material('Toll booth glass',(.06,.17,.20),.2,.3)
+lamp=material('Toll lane light',(.3,.9,.5),.4,0,2)
+def tbox(name,loc,dims,mat,bevel=.05):
+    o=box(name,loc,dims,mat,bevel);o.parent=toll;return o
+for side in [-1,1]:
+    tbox('Toll island',(side*9,-12,.18),(3,10,.36),concrete)
+    tbox('Toll booth',(side*9,-12,1.7),(2,3.6,3),green)
+    tbox('Booth window',(side*9,-10.18,2),(1.6,.035,1.35),glass,.01)
+    for y in [-15,-9]:tbox('Canopy support',(side*11,y,3.85),(.45,.45,7.7),alloy)
+tbox('Canopy roof',(0,-12,7.8),(25,8,.5),green)
+tbox('Canopy front fascia',(0,-7.97,7.45),(25,.12,.7),white)
+for x in [-4.2,0,4.2]:tbox('Open lane indicator',(x,-7.85,7.4),(.55,.08,.25),lamp,.03)
+# Batch each plaza material; retain a clean external asset root.
+for matname in set(o.data.materials[0].name for o in toll.children if o.type=='MESH'):
+    objects=[o for o in toll.children if o.type=='MESH' and o.data.materials[0].name==matname]
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in objects:o.select_set(True)
+    bpy.context.view_layer.objects.active=objects[0];bpy.ops.object.convert(target='MESH')
+    if len(objects)>1:bpy.ops.object.join()
+    bpy.context.object.name='Plaza '+matname
+toll.location.x=25
 
 # Presentation rig is outside KartRoot and is excluded by the game loader.
 bpy.ops.object.camera_add(location=(3.5,5.5,3.0))
@@ -239,3 +279,7 @@ scene.world.color=(.15,.15,.15);scene.render.film_transparent=True
 scene.render.image_settings.file_format='PNG';scene.render.image_settings.media_type='IMAGE'
 preview=artifacts.file(name='hero-kart-rear.png',media_type='image/png');scene.render.filepath=preview.path;bpy.ops.render.render(write_still=True);preview.publish()
 result={'asset':'KartRoot','wheelPivots':['WheelFrontL','WheelFrontR','WheelRearL','WheelRearR'],'objects':len(root.children)}
+
+camera.location=(42,20,22);camera.rotation_euler=(Vector((25,-12,3))-camera.location).to_track_quat('-Z','Y').to_euler();camera.data.ortho_scale=38
+preview=artifacts.file(name='toll-plaza.png',media_type='image/png');scene.render.filepath=preview.path;bpy.ops.render.render(write_still=True);preview.publish()
+result={'roots':['KartRoot','TollPlazaRoot'],'driverPivots':['DriverTorso','DriverHead','DriverHands']}

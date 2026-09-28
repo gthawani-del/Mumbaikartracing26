@@ -14,16 +14,23 @@ export function createOcean(scene, curve) {
         gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.);
       }`,
     fragmentShader: `uniform float time; uniform vec3 horizon; varying vec3 world;
+      float hash(vec2 p) { return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float noise(vec2 p) {
+        vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+        return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);
+      }
       void main() {
-        float wave = sin(world.x * .9 + world.z * .38 + time * 1.4)
-                   + sin(world.z * 1.6 - world.x * .2 - time * .8);
-        float crest = pow(max(0., wave * .5), 9.);
-        float ripple = .5 + .5 * sin(world.x * .14 + world.z * .3 + time * .5);
-        vec3 water = mix(vec3(.008,.04,.065), vec3(.02,.105,.14), ripple);
-        water += vec3(.08,.18,.21) * crest * .4;
-        float distanceToEye = length(cameraPosition - world);
-        water = mix(water, horizon, smoothstep(200., 1500., distanceToEye));
-        gl_FragColor = vec4(water, 1.);
+        vec2 uv=world.xz;
+        float broad=noise(uv*.12+vec2(time*.035,0.));
+        float small=noise(uv*1.3+vec2(-time*.16,time*.09));
+        float ripple=broad*.7+small*.3;
+        vec3 water=mix(vec3(.045,.060,.049),vec3(.085,.105,.084),ripple);
+        float distanceToEye=length(cameraPosition-world);
+        float glint=smoothstep(.8,.98,small)*.015*(1.-smoothstep(20.,160.,distanceToEye));
+        water+=vec3(glint);
+        water=mix(water,vec3(.15,.19,.21),smoothstep(40.,450.,distanceToEye)*.5);
+        water=mix(water,horizon,smoothstep(250.,1600.,distanceToEye));
+        gl_FragColor=vec4(water,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,

@@ -74,12 +74,12 @@ test('a rival who crosses the finish first stays ahead of the player', () => {
   assert.equal(racePosition(race), 4);
 });
 
-test('180 km/h base and 230 km/h boost are reachable, with gradual boost recovery', () => {
+test('180 km/h base and 250 km/h boost are reachable, with gradual boost recovery', () => {
   const race = createRace({ length: 10000, rivals: 0 });
   for (let i = 0; i < 240; i++) stepRace(race, { accelerate: true }, 1 / 60);
   assert.ok(Math.abs(race.player.speed * 3.6 - 180) < 1e-8);
   for (let i = 0; i < 40; i++) stepRace(race, { accelerate: true, boost: true }, 1 / 60);
-  assert.ok(Math.abs(race.player.speed * 3.6 - 230) < 1e-8);
+  assert.ok(Math.abs(race.player.speed * 3.6 - 250) < 1e-8);
   assert.ok(race.player.boosting);
   const before = race.player.speed;
   stepRace(race, { accelerate: true }, 1 / 60);

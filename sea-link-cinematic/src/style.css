@@ -55,3 +55,5 @@
 #weather-status{font-size:8px;color:#b0e4f5;letter-spacing:.09em}
 @media(max-width:350px){.mobile-controls{left:8px;right:8px;gap:6px}.steer-pad{width:134px}.steer-pad button{width:66px}}
 @media(max-height:500px){.drive-pad{grid-template-rows:40px 82px}.drive-pad [data-control=accelerate]{height:82px}.steer-pad{height:88px}.steer-pad button{height:88px}.steer-pad .wheel-art{width:88px;height:88px}}
+
+.race-intro{position:absolute;inset:25% 0 auto;display:flex;flex-direction:column;align-items:center;gap:22px;pointer-events:none;text-shadow:0 3px 18px #000}.race-intro[hidden]{display:none}.race-intro strong{font-size:clamp(24px,5vw,48px);letter-spacing:.08em;color:#fff;text-align:center}.race-intro button{pointer-events:auto;padding:11px 22px;border:1px solid #fff8;border-radius:24px;background:#172733c9;color:white;font-weight:700}.in-intro .mobile-controls,.in-intro .speed-card,.in-intro .boost-card{visibility:hidden}

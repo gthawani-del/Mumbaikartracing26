@@ -1,3 +1,4 @@
+import { createIntro, advanceIntro, skipIntro } from './race-intro.js';
 import * as THREE from 'three';
 import { createWeatherState, advanceWeather } from './weather-state.js';
 import { createOcean, createBoostEffects, updateBoostEffects } from './race-effects.js';
@@ -15,7 +16,7 @@ const held = new Set();
 const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'accelerate', KeyW: 'accelerate', Space: 'accelerate', ArrowDown: 'brake', KeyS: 'brake', ShiftLeft: 'drift', ShiftRight: 'drift', KeyE: 'boost' };
 let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], weather, reflections, minimap, raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
 let disposed = false, paused = false;
-let simulation, ocean, boostEffects;
+let simulation, ocean, boostEffects, intro, visualTime = 0;
 let engineAudio = null;
 let soundMuted = false;
 
@@ -74,13 +75,17 @@ function roadSignTexture(title, subtitle) {
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture;
 }
 
+function roadHalfAt(distance) {
+  return ROAD_HALF + 2.4 * (1 - THREE.MathUtils.smoothstep(distance, 12, 120 * SCALE));
+}
+
 function roadFrame(distance) {
   const u = clamp(distance / routeLength, 0, 1);
   const point = curve.getPointAt(u);
   const tangent = curve.getTangentAt(u).normalize();
   // Driver right = forward cross world-up.
   const right = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-  return { point, tangent, right, yaw: Math.atan2(tangent.x, tangent.z) };
+  return { point, tangent, right, width: roadHalfAt(distance), yaw: Math.atan2(tangent.x, tangent.z) };
 }
 
 function makeKart(color = '#a63e35') {
@@ -152,6 +157,7 @@ function modelKart(template, color = '#ea364e', number = 1) {
     polygonOffset: true, polygonOffsetFactor: -1,
   }));
   plate.position.set(0, 0.51, -1.218); plate.rotation.y = Math.PI; object.add(plate);
+  object.userData.driver = ['DriverTorso', 'DriverHead', 'DriverHands'].map(name => object.getObjectByName(name));
   object.userData.wheels = wheels; object.userData.lamps = lamps;
   object.scale.setScalar(KART_SCALE);
   return object;
@@ -346,7 +352,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   for (let i = 0; i < roadSamples.length; i++) {
     const p = roadSamples[i], t = roadTangent(i); const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
     for (const side of [-1, 1]) {
-      vertices.push(p.x + right.x * ROAD_HALF * side, 0.16, p.z + right.z * ROAD_HALF * side);
+      vertices.push(p.x + right.x * roadHalfAt((i - 1) / 600 * routeLength) * side, 0.16, p.z + right.z * roadHalfAt((i - 1) / 600 * routeLength) * side);
       uvs.push(side + 1, (i - 1) / 600 * routeLength / 2);
     }
     if (i < roadSamples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
@@ -381,7 +387,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
     const p = roadSamples[i], t = roadTangent(i);
     const right = new THREE.Vector3(t.z, 0, -t.x).normalize();
     for (const side of [-1, 1]) for (const offset of [-0.035, 0.035]) {
-      edgeVertices.push(p.x + right.x * (ROAD_HALF - 0.28 + offset) * side, 0.185, p.z + right.z * (ROAD_HALF - 0.28 + offset) * side);
+      edgeVertices.push(p.x + right.x * (roadHalfAt((i - 1) / 600 * routeLength) - 0.28 + offset) * side, 0.185, p.z + right.z * (roadHalfAt((i - 1) / 600 * routeLength) - 0.28 + offset) * side);
     }
     if (i < roadSamples.length - 1) for (let side = 0; side < 2; side++) {
       const a = i * 4 + side * 2; edgeIndices.push(a, a + 1, a + 4, a + 1, a + 5, a + 4);
@@ -398,11 +404,11 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   for (let i = 0; i <= 150; i++) {
     const frame = roadFrame(routeLength * i / 150);
     for (const side of [-1, 1]) {
-      const pos = frame.point.clone().addScaledVector(frame.right, side * (ROAD_HALF + 0.12));
+      const pos = frame.point.clone().addScaledVector(frame.right, side * (frame.width + 0.12));
       dummy.position.set(pos.x, 0.75, pos.z); dummy.rotation.set(0, frame.yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix(); railPosts.setMatrixAt(postIndex++, dummy.matrix);
       if (i < 150) {
         const next = roadFrame(routeLength * (i + 1) / 150);
-        const end = next.point.clone().addScaledVector(next.right, side * (ROAD_HALF + 0.12));
+        const end = next.point.clone().addScaledVector(next.right, side * (next.width + 0.12));
         const span = end.clone().sub(pos); const mid = pos.clone().add(end).multiplyScalar(0.5);
         dummy.position.set(mid.x, 1.05, mid.z); dummy.rotation.set(0, Math.atan2(span.x, span.z), 0); dummy.scale.set(1, 1, span.length() + 0.08); dummy.updateMatrix(); railRuns.setMatrixAt(runIndex++, dummy.matrix);
         dummy.position.y = 0.34; dummy.scale.z = Math.max(0.1, span.length() - 0.05); dummy.updateMatrix(); barriers.setMatrixAt(runIndex - 1, dummy.matrix);
@@ -415,7 +421,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   for (let i = 0; i <= 150; i += 2) {
     const frame = roadFrame(routeLength * i / 150);
     for (const side of [-1, 1]) {
-      const pos = frame.point.clone().addScaledVector(frame.right, side * (ROAD_HALF - 0.03));
+      const pos = frame.point.clone().addScaledVector(frame.right, side * (frame.width - 0.03));
       dummy.position.set(pos.x, 0.48, pos.z); dummy.rotation.set(0, frame.yaw, 0); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
       reflectors.setMatrixAt(reflectorCount++, dummy.matrix);
     }
@@ -438,7 +444,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
       markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.updateMatrix(); centerMarks.setMatrixAt(markerCount++, markerTransform.matrix);
     }
     if (i % 12 === 0) for (const side of [-1, 1]) {
-      const base = p.clone().addScaledVector(right, side * (ROAD_HALF + 0.55));
+      const base = p.clone().addScaledVector(right, side * (roadHalfAt(routeLength * i / 600) + 0.55));
       const inward = base.clone().addScaledVector(right, -side * 0.9);
       markerTransform.rotation.set(0, Math.atan2(t.x, t.z), 0); markerTransform.scale.set(1, 1, 1);
       markerTransform.position.set(base.x, 2.25, base.z); markerTransform.updateMatrix(); lampPole.setMatrixAt(lightCount, markerTransform.matrix);
@@ -452,7 +458,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   scene.add(centerMarks, lampPole, lampArm, lampBulb, glow, reflections);
   scene.userData.lampReflections = reflections;
   // Route signs sit near the bridge approaches, where overhead guidance belongs.
-  for (const [fraction, title, subtitle] of [[0.11, 'BANDRA - WORLI SEA LINK', 'WORLI  ↑'], [0.86, 'WORLI APPROACH', 'KEEP TO YOUR LANE  ↑']]) {
+  for (const [fraction, title, subtitle] of [[0.11, 'To worli check point', 'KEEP LEFT  ↑'], [0.86, 'To worli check point', 'KEEP TO YOUR LANE  ↑']]) {
     const frame = roadFrame(routeLength * fraction);
     const gantry = new THREE.Group(); gantry.position.copy(frame.point); gantry.rotation.y = frame.yaw;
     for (const side of [-1, 1]) {
@@ -518,7 +524,7 @@ function showEvent(message) {
   const banner = $('#event-banner'); banner.textContent = message; banner.classList.add('visible'); window.clearTimeout(eventTimeout); eventTimeout = window.setTimeout(() => banner.classList.remove('visible'), 2400);
 }
 
-// Base (180 km/h) and boost (230 km/h) limits live in race-logic.js.
+// Base (180 km/h) and boost (250 km/h) limits live in race-logic.js.
 function unlockEngineAudio() {
   const Context = window.AudioContext || window.webkitAudioContext;
   if (!Context || disposed) return;
@@ -586,6 +592,14 @@ function updateKart(object, playerFrame, dt, playerKart = false) {
     const radius = wheel.name.includes('Rear') ? 0.35 : 0.30;
     wheel.rotation.x = -distance * SCALE / (radius * object.scale.x);
   }
+  const [torso, head, hands] = object.userData.driver ?? [];
+  const steer = clamp(lateralSpeed / 5.2, -1, 1);
+  if (torso) {
+    torso.rotation.z = THREE.MathUtils.damp(torso.rotation.z, -steer * .035 + Math.sin(visualTime * 2) * .003, 8, dt);
+    head.rotation.y = THREE.MathUtils.damp(head.rotation.y, -steer * .12, 7, dt);
+    head.rotation.x = Math.sin(visualTime * 1.7) * .012;
+    hands.rotation.z = THREE.MathUtils.damp(hands.rotation.z, -steer * .1, 9, dt);
+  }
   if (playerKart) {
     object.rotation.z = THREE.MathUtils.damp(object.rotation.z, -lateralSpeed * 0.018, 7, dt);
   }
@@ -636,6 +650,27 @@ function tick(now) {
   if (disposed || paused) return;
   raf = requestAnimationFrame(tick);
   const dt = lastFrame ? Math.max(0, Math.min((now - lastFrame) / 1000, 0.25)) : 0; lastFrame = now;
+  visualTime += dt;
+  if (intro.phase !== 'racing') {
+    const ready = advanceIntro(intro, dt);
+    updateKart(kart, simulation.frame.player, dt, true);
+    simulation.frame.rivals.forEach((r, i) => updateKart(rivals[i], r, dt));
+    updateReflections(); ocean.material.uniforms.time.value += dt;
+    updateCamera(simulation.frame.player, dt);
+    const start = roadFrame(0), t = intro.progress * intro.progress * (3 - 2 * intro.progress);
+    const aerial = start.point.clone().addScaledVector(start.tangent, 18).addScaledVector(start.right, 10).add(new THREE.Vector3(0, 20, 0));
+    camera.position.lerpVectors(aerial, camera.position.clone(), t);
+    cameraTarget.lerpVectors(start.point.clone().addScaledVector(start.tangent, 8), cameraTarget.clone(), t);
+    camera.lookAt(cameraTarget);
+    scene.userData.kartFill.position.copy(camera.position).add(new THREE.Vector3(0, 2, 0));
+    $('#intro-label').textContent = intro.phase === 'flyover' ? 'BANDRA TOLL PLAZA' : ready ? 'GO' : String(intro.count);
+    $('#skip-intro').hidden = intro.phase !== 'flyover';
+    $('#race-intro').hidden = ready;
+    $('#game-view').classList.toggle('in-intro', !ready);
+    renderer.render(scene, camera); renderHud(now);
+    if (ready) showEvent('GO!');
+    return;
+  }
   const input = controls();
   const result = advanceSimulation(simulation, race, input, dt);
   updateEngineAudio(result.frame.player, input);
@@ -682,9 +717,10 @@ function bindUi() {
     const end = (event) => { event.preventDefault(); held.delete(button.dataset.control); button.classList.remove('pressed'); };
     button.addEventListener('pointerdown', start); button.addEventListener('pointerup', end); button.addEventListener('pointercancel', end); button.addEventListener('lostpointercapture', end);
   });
+  $('#skip-intro').addEventListener('click', () => { skipIntro(intro); });
   $('#pause-race').addEventListener('click', () => pause(true)); $('#resume-race').addEventListener('click', () => { unlockEngineAudio(); pause(false); });
   $('#exit-race').addEventListener('click', leave); $('#finish-exit').addEventListener('click', leave);
-  $('#restart-race').addEventListener('click', () => { $('#finish-overlay').hidden = true; start(raceConfig); });
+  $('#restart-race').addEventListener('click', () => { $('#finish-overlay').hidden = true; start(raceConfig, true); });
 }
 let raceConfig;
 function leave() { dispose(); onExitCallback?.(); }
@@ -704,8 +740,8 @@ function dispose() {
   renderer = scene = camera = cameraTarget = weather = reflections = minimap = null;
 }
 
-async function start(config) {
-  dispose(); disposed = false; paused = false; raceConfig = config; lastFrame = 0; lastUi = 0; shake = 0;
+async function start(config, retry = false) {
+  dispose(); disposed = false; paused = false; visualTime = 0; intro = createIntro(retry || window.matchMedia('(prefers-reduced-motion: reduce)').matches); raceConfig = config; lastFrame = 0; lastUi = 0; shake = 0;
   $('#pause-overlay').hidden = true; $('#finish-overlay').hidden = true; $('#event-banner').classList.remove('visible'); window.clearTimeout(eventTimeout);
   const loader = new GLTFLoader();
   const model = (path) => loader.loadAsync(path).then((asset) => asset.scene).catch((error) => { console.warn(`${path} unavailable; using the lightweight fallback.`, error); return null; });
@@ -723,6 +759,12 @@ async function start(config) {
   textureModels(kartTemplate, pylonTemplate, fabric, concrete);
   if (fabric) { materials.shirt.map = fabric; materials.shirt.color.set('#e5e5e5'); materials.shirt.needsUpdate = true; }
   makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate, asphalt, concrete, config.timeOfDay);
+  const plazaTemplate = kartTemplate?.getObjectByName('TollPlazaRoot');
+  if (plazaTemplate) {
+    const plaza = plazaTemplate.clone(true), frame = roadFrame(43 * SCALE);
+    plaza.position.copy(frame.point); plaza.position.y = .16;
+    plaza.rotation.set(0, frame.yaw, 0); plaza.scale.setScalar(SCALE); scene.add(plaza);
+  }
   kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
   const kartFill = new THREE.DirectionalLight(0xd9e6ff, 1.15);
   kartFill.target = kart; scene.add(kartFill); scene.userData.kartFill = kartFill;
@@ -743,6 +785,7 @@ async function start(config) {
   weather = makeWeather(); boostEffects = createBoostEffects(kart, scene);
   const start = roadFrame(0); const tallPhone = camera.aspect < 0.52;
   camera.position.copy(start.point).addScaledVector(start.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
+  $('#race-intro').hidden = false; $('#game-view').classList.add('in-intro');
   bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
   raf = requestAnimationFrame(tick);
 }

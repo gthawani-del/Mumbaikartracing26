@@ -1,7 +1,7 @@
 export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // Speeds are metres per second; HUD converts to km/h.
 export const MAX_SPEED = 180 / 3.6;
-export const BOOST_MAX_SPEED = 230 / 3.6;
+export const BOOST_MAX_SPEED = 250 / 3.6;
 const LANE_LIMIT_METERS = 6.5;
 
 const DIFFICULTY_PACE = { Easy: 42, Medium: 47, Hard: 53 };
