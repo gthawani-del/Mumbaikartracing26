@@ -4,7 +4,7 @@ import { createRace, advanceRace, racePosition, clamp } from './race-logic.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SCALE = 0.28;
-const KART_SCALE = 0.48;
+const KART_SCALE = 0.43;
 const ROAD_HALF = 2;
 const held = new Set();
 const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'accelerate', KeyW: 'accelerate', Space: 'accelerate', ArrowDown: 'brake', KeyS: 'brake', ShiftLeft: 'drift', ShiftRight: 'drift', KeyE: 'boost' };
@@ -83,7 +83,42 @@ function modelKart(template, color) {
   return object;
 }
 
-function addWorld(data, pylonTemplate) {
+async function surfaceTexture(name) {
+  try {
+    const texture = await new THREE.TextureLoader().loadAsync(new URL(`./textures/${name}.webp`, document.baseURI).href);
+    texture.wrapS = texture.wrapT = THREE.MirroredRepeatWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    return texture;
+  } catch (error) {
+    console.warn(`${name} texture unavailable; using the material color.`, error);
+    return null;
+  }
+}
+
+function textureModels(kartTemplate, pylonTemplate, fabric, concrete) {
+  if (kartTemplate && fabric) kartTemplate.traverse((part) => {
+    if (!part.isMesh || part.material?.name !== 'Racing jersey') return;
+    part.material = part.material.clone(); part.material.color.set('#e5e5e5');
+    part.material.map = fabric; part.material.roughness = 0.9;
+  });
+  if (pylonTemplate && concrete) pylonTemplate.traverse((part) => {
+    if (!part.isMesh || !part.material?.name?.toLowerCase().includes('concrete')) return;
+    if (!part.geometry.getAttribute('uv')) {
+      const geometry = part.geometry.clone(); const positions = geometry.getAttribute('position'); const normals = geometry.getAttribute('normal');
+      const uvs = new Float32Array(positions.count * 2);
+      for (let i = 0; i < positions.count; i++) {
+        uvs[i * 2] = (Math.abs(normals.getX(i)) > Math.abs(normals.getZ(i)) ? positions.getZ(i) : positions.getX(i)) * 0.25;
+        uvs[i * 2 + 1] = positions.getY(i) * 0.25;
+      }
+      geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2)); part.geometry = geometry;
+    }
+    part.material = part.material.clone(); part.material.color.set('#eeeeee');
+    part.material.map = concrete; part.material.roughness = 0.78;
+  });
+}
+
+function addWorld(data, pylonTemplate, asphalt, concrete) {
   const [lon0, lat0] = data.route[0]; const cos = Math.cos(lat0 * Math.PI / 180);
   const pts = data.route.map(([lon, lat]) => new THREE.Vector3((lon - lon0) * 111320 * cos * SCALE, 0, (lat0 - lat) * 111320 * SCALE));
   curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.25);
@@ -99,11 +134,13 @@ function addWorld(data, pylonTemplate) {
     if (i < samples.length - 1) { const a = i * 2; indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
   }
   const roadGeo = new THREE.BufferGeometry(); roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); roadGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); roadGeo.setIndex(indices); roadGeo.computeVertexNormals();
-  materials.asphalt.map?.dispose(); materials.asphalt.map = asphaltTexture(); materials.asphalt.needsUpdate = true;
+  materials.asphalt.map = asphalt ?? asphaltTexture(); materials.asphalt.roughness = 0.45; materials.asphalt.needsUpdate = true;
   const road = new THREE.Mesh(roadGeo, materials.asphalt); road.material.side = THREE.DoubleSide; scene.add(road);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(5000, routeLength + 1000), new THREE.MeshStandardMaterial({ color: '#547b86', roughness: 0.3, metalness: 0.18 })); sea.rotation.x = -Math.PI / 2; sea.position.set(-65, -4.2, routeLength / 2); scene.add(sea);
   const deck = new THREE.Mesh(roadGeo.clone().translate(0, -0.5, 0), mat('#50545a', 0.65, 0.35)); deck.material.side = THREE.DoubleSide; scene.add(deck);
-  const barriers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.42, 1), mat('#aeb6b7', 0.7), 2 * 150);
+  const barrierMaterial = mat(concrete ? '#eeeeee' : '#aeb6b7', 0.75);
+  if (concrete) barrierMaterial.map = concrete;
+  const barriers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.42, 1), barrierMaterial, 2 * 150);
   const railPosts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), materials.rail, 2 * 151);
   const railRuns = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 0.12, 1), materials.rail, 2 * 150);
   const dummy = new THREE.Object3D(); let postIndex = 0, runIndex = 0;
@@ -231,7 +268,7 @@ function tick(now) {
   updateKart(kart, race.player.distance, race.player.lane, dt, true);
   race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
   const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.2).addScaledVector(frame.right, race.player.lane * SCALE * 0.35); look.y += 0.9;
-  const desired = frame.point.clone().addScaledVector(frame.tangent, -1.85).add(new THREE.Vector3(0, 1.48, 0));
+  const desired = frame.point.clone().addScaledVector(frame.tangent, -2.55).add(new THREE.Vector3(0, 1.65, 0));
   desired.addScaledVector(frame.right, race.player.lane * SCALE * 0.65);
   if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
   const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
@@ -287,9 +324,10 @@ async function start(config) {
   $('#pause-overlay').hidden = true; $('#finish-overlay').hidden = true; $('#event-banner').classList.remove('visible'); window.clearTimeout(eventTimeout);
   const loader = new GLTFLoader();
   const model = (path) => loader.loadAsync(path).then((asset) => asset.scene).catch((error) => { console.warn(`${path} unavailable; using the lightweight fallback.`, error); return null; });
-  const [route, kartTemplate, pylonTemplate] = await Promise.all([
+  const [route, kartTemplate, pylonTemplate, asphalt, concrete, fabric] = await Promise.all([
     fetch(new URL('./osm-sea-link.json', document.baseURI)).then((response) => { if (!response.ok) throw new Error('Could not load the cached Sea Link route.'); return response.json(); }),
     model(new URL('./models/sea-link-kart.glb', document.baseURI).href), model(new URL('./models/sea-link-pylon.glb', document.baseURI).href),
+    surfaceTexture('coastal-asphalt'), surfaceTexture('sea-link-concrete'), surfaceTexture('driver-fabric'),
   ]);
   if (disposed) return;
   scene = new THREE.Scene();
@@ -300,7 +338,9 @@ async function start(config) {
     const [prevLon, prevLat] = route.route[index]; const dx = (lon - prevLon) * 111320 * Math.cos(((lat + prevLat) * 0.5) * Math.PI / 180); const dz = (lat - prevLat) * 111320;
     return total + Math.hypot(dx, dz);
   }, 0);
-  makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate);
+  textureModels(kartTemplate, pylonTemplate, fabric, concrete);
+  if (fabric) { materials.shirt.map = fabric; materials.shirt.color.set('#e5e5e5'); materials.shirt.needsUpdate = true; }
+  makeEnvironment(config.timeOfDay); addWorld(route, pylonTemplate, asphalt, concrete);
   kart = kartTemplate ? modelKart(kartTemplate) : makeKart(); scene.add(kart);
   const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
   rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
@@ -308,8 +348,8 @@ async function start(config) {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6)); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
   $('#game-canvas').replaceChildren(renderer.domElement);
-  camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 2600);
-  const start = roadFrame(0); camera.position.copy(start.point).addScaledVector(start.tangent, -1.85).add(new THREE.Vector3(0, 1.48, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
+  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
+  const start = roadFrame(0); camera.position.copy(start.point).addScaledVector(start.tangent, -2.55).add(new THREE.Vector3(0, 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
   bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
   raf = requestAnimationFrame(tick);
 }
