@@ -2,6 +2,7 @@ export const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 // Speeds are metres per second; HUD converts to km/h.
 export const MAX_SPEED = 180 / 3.6;
 export const BOOST_MAX_SPEED = 250 / 3.6;
+export const BOOST_MIN_CHARGE = 0.15;
 const LANE_LIMIT_METERS = 6.5;
 
 const DIFFICULTY_PACE = { Easy: 42, Medium: 47, Hard: 53 };
@@ -22,7 +23,7 @@ export function createRace({ length, rivals = 7, difficulty = 'Medium', events =
     eventsEnabled: new Set(events),
     eventState: { windFired: false, gateFired: false, windTime: 0, windSide: 1 },
     sectors: [null, null],
-    player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, boosting: false, charge: 0.65, boostTime: 0, impacts: 0, finishTime: null },
+    player: { distance: 0, lane: 0, lateralSpeed: 0, speed: 0, boosting: false, manualBoosting: false, boostExhausted: false, charge: 0.65, boostTime: 0, impacts: 0, finishTime: null },
     rivals: Array.from({ length: rivals }, (_, index) => ({
       distance: grid[index]?.distance ?? 48 + (index - grid.length + 1) * 9,
       lane: grid[index]?.lane ?? (index % 2 ? 4.2 : -4.2),
@@ -47,14 +48,20 @@ export function stepRace(race, input, elapsed) {
   // Positive lateral position is the driver's right side in the route frame.
   const steer = Number(Boolean(input.right)) - Number(Boolean(input.left));
   const drifting = Boolean(input.drift) && steer !== 0 && player.speed > 8;
-  const manualBoost = Boolean(input.boost) && player.charge > 0.01 && player.speed > 4 && !input.brake;
+  // Boost doubles as throttle, so a phone player only needs two thumbs.
+  // Once depleted, require release and enough charge for a useful new burst.
+  if (!input.boost) player.boostExhausted = false;
+  const enoughCharge = player.charge >= (player.manualBoosting ? 0.42 * dt : BOOST_MIN_CHARGE);
+  const manualBoost = Boolean(input.boost) && !player.boostExhausted && enoughCharge && !input.brake;
+  if (input.boost && player.manualBoosting && !enoughCharge) player.boostExhausted = true;
+  player.manualBoosting = manualBoost;
   const gateBoost = player.boostTime > 0 && !input.brake;
   const boosting = manualBoost || gateBoost;
   player.boosting = boosting;
   const topSpeed = boosting ? BOOST_MAX_SPEED : MAX_SPEED;
 
   if (input.brake) player.speed = Math.max(0, player.speed - 42 * dt);
-  else if (input.accelerate) player.speed = player.speed > topSpeed
+  else if (input.accelerate || input.boost || gateBoost) player.speed = player.speed > topSpeed
     ? Math.max(topSpeed, player.speed - 12 * dt)
     : Math.min(topSpeed, player.speed + (boosting ? 32 : 23) * dt);
   else player.speed = Math.max(0, player.speed - 3.2 * dt);

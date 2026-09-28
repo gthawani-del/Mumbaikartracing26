@@ -4,7 +4,7 @@ import { createWeatherState, advanceWeather } from './weather-state.js';
 import { createOcean, createBoostEffects, updateBoostEffects } from './race-effects.js';
 import { createSkyTexture, createWetSurfaceMaps } from './environment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createRace, racePosition, clamp, MAX_SPEED } from './race-logic.js';
+import { createRace, racePosition, clamp, MAX_SPEED, BOOST_MIN_CHARGE } from './race-logic.js';
 
 import { createSimulation, advanceSimulation } from './simulation.js';
 
@@ -580,7 +580,7 @@ function disposeEngineAudio() {
 
 function controls() {
   const input = Object.fromEntries(['left', 'right', 'accelerate', 'brake', 'drift', 'boost'].map((key) => [key, held.has(key)]));
-  input.accelerate ||= held.has('accelerate');
+  input.accelerate ||= input.boost;
   return input;
 }
 
@@ -615,6 +615,11 @@ function renderHud(now) {
   $('#hud-progress').style.width = `${(progress * 100).toFixed(1)}%`;
   $('#hud-sector').textContent = `SECTOR ${Math.min(3, Math.floor(progress * 3) + 1)} / 3`;
   $('#hud-boost').style.width = `${Math.round(p.charge * 100)}%`;
+  const boostButton = $('[data-control=boost]');
+  boostButton.classList.toggle('boost-active', p.boosting);
+  boostButton.classList.toggle('recharging', !p.boosting && (p.charge < BOOST_MIN_CHARGE || p.boostExhausted));
+  boostButton.style.setProperty('--charge', `${p.charge * 360}deg`);
+  boostButton.setAttribute('aria-label', p.boosting ? 'Boost active' : p.boostExhausted ? 'Release boost to recharge' : p.charge < BOOST_MIN_CHARGE ? 'Boost recharging; hold to accelerate' : 'Hold boost to accelerate');
   const [x, y] = minimap.mapPoint(p.distance);
   minimap.player.setAttribute('cx', x); minimap.player.setAttribute('cy', y);
   race.rivals.forEach((rival, i) => { const [rx, ry] = minimap.mapPoint(rival.distance); minimap.rivals[i].setAttribute('cx', rx); minimap.rivals[i].setAttribute('cy', ry); });
@@ -698,22 +703,27 @@ function finishRace() {
   $('#finish-overlay').hidden = false;
 }
 
+function clearControls() {
+  held.clear();
+  document.querySelectorAll('[data-control].pressed').forEach(button => button.classList.remove('pressed'));
+}
+
 function keyDown(event) { if (disposed) return; const key = keys[event.code]; if (key) { unlockEngineAudio(); held.add(key); event.preventDefault(); } if (event.code === 'Escape') pause(true); }
 function keyUp(event) { if (disposed) return; const key = keys[event.code]; if (key) { held.delete(key); event.preventDefault(); } }
 function pause(value) {
   if (disposed || race.finished) return;
   paused = value; $('#pause-overlay').hidden = !value;
-  if (value) { silenceEngineAudio(); held.clear(); cancelAnimationFrame(raf); }
+  if (value) { silenceEngineAudio(); clearControls(); cancelAnimationFrame(raf); }
   else { lastFrame = 0; raf = requestAnimationFrame(tick); }
 }
 
 function bindUi() {
   if (uiBound) return; uiBound = true;
-  window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp); window.addEventListener('blur', () => held.clear());
+  window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp); window.addEventListener('blur', () => { clearControls(); if (race && !disposed && !paused) pause(true); });
   window.addEventListener('resize', resize);
   document.addEventListener('visibilitychange', () => { if (document.hidden && race && !disposed && !paused) pause(true); });
   document.querySelectorAll('[data-control]').forEach((button) => {
-    const start = (event) => { event.preventDefault(); unlockEngineAudio(); held.add(button.dataset.control); button.classList.add('pressed'); button.setPointerCapture?.(event.pointerId); };
+    const start = (event) => { event.preventDefault(); if (disposed || paused || race.finished || intro.phase !== 'racing') return; unlockEngineAudio(); held.add(button.dataset.control); button.classList.add('pressed'); button.setPointerCapture?.(event.pointerId); };
     const end = (event) => { event.preventDefault(); held.delete(button.dataset.control); button.classList.remove('pressed'); };
     button.addEventListener('pointerdown', start); button.addEventListener('pointerup', end); button.addEventListener('pointercancel', end); button.addEventListener('lostpointercapture', end);
   });
@@ -726,7 +736,7 @@ let raceConfig;
 function leave() { dispose(); onExitCallback?.(); }
 function dispose() {
   disposeEngineAudio();
-  disposed = true; cancelAnimationFrame(raf); held.clear();
+  disposed = true; cancelAnimationFrame(raf); clearControls();
   scene?.background?.dispose?.();
   scene?.userData.environmentTarget?.dispose();
   const textures = new Set();

@@ -35,7 +35,7 @@
 .hud-bottom .speed-card{right:18px;bottom:calc(185px + env(safe-area-inset-bottom))}
 .hud-bottom .boost-card{left:20px;bottom:calc(103px + env(safe-area-inset-bottom));width:102px}
 @media(min-width:701px){.speed-dial{width:100px;height:100px}.speed-dial strong{font-size:35px}.speed-dial small{font-size:10px}}
-@media(max-height:500px){.drive-pad{grid-template-rows:40px 76px}.drive-pad [data-control=accelerate]{height:76px}.drive-pad [data-control=accelerate] svg{height:34px}.hud-bottom .speed-card{bottom:calc(150px + env(safe-area-inset-bottom))}.speed-dial{width:66px;height:66px;border-width:4px}.speed-dial strong{font-size:24px}.speed-dial small{font-size:7px}}
+@media(max-height:500px){.drive-pad{grid-template-rows:40px 76px}.drive-pad [data-control=accelerate]{height:76px}.drive-pad [data-control=accelerate] svg{height:34px}.hud-bottom .speed-card{bottom:calc(174px + env(safe-area-inset-bottom))}.speed-dial{width:66px;height:66px;border-width:4px}.speed-dial strong{font-size:24px}.speed-dial small{font-size:7px}}
 
 /* Wheel and machined pedals, matching the arcade control reference. */
 .steer-pad{position:relative;isolation:isolate;width:142px;height:100px;padding:0;border:0;background:none;gap:0;flex:none;align-items:center;justify-content:space-between}
@@ -45,15 +45,21 @@
 .steer-pad button{width:70px;height:100px;border:0;border-radius:30px;background:transparent;box-shadow:none;backdrop-filter:none;justify-content:flex-start}
 .steer-pad button[data-control=right]{justify-content:flex-end}.steer-pad button svg{width:22px;height:22px;fill:#56f7e5;stroke:#062c39;stroke-width:1}
 .steer-pad button.pressed,.steer-pad button:active{background:#5de6fa15;box-shadow:none}
-.drive-pad{grid-template-columns:76px 52px;grid-template-rows:40px 108px;gap:8px}
-.drive-pad [data-control=accelerate],.drive-pad [data-control=brake]{position:relative;overflow:hidden;background:radial-gradient(circle,#26303b 0 3px,#e4edf28c 3.5px 4px,transparent 4.5px) 4px 5px/15px 15px,linear-gradient(110deg,#657480d9,#e5edf3d9 45%,#899daec9);border:2px solid #e6edf5bd;border-radius:12px;color:#fff;box-shadow:inset 0 1px 5px #fff7,0 5px 0 #17222bcc,0 0 17px #50e5b42b;justify-content:flex-end;padding:7px 2px}
-.drive-pad [data-control=accelerate]{height:108px;transform:rotate(5deg)}.drive-pad [data-control=brake]{height:62px;transform:rotate(-5deg);box-shadow:inset 0 1px 5px #fff7,0 5px 0 #17222bcc,0 0 17px #ff405f3a}
+/* Compact pedals; boost sits directly above gas within the right thumb's reach. */
+.drive-pad{grid-template-columns:58px 64px;grid-template-rows:64px 72px;gap:10px;align-items:end}
+.drive-pad [data-control=accelerate],.drive-pad [data-control=brake]{position:relative;background:radial-gradient(circle,#26303b 0 2px,#e4edf28c 2.5px 3px,transparent 3.5px) 3px 4px/13px 13px,linear-gradient(110deg,#657480d9,#e5edf3d9 45%,#899daec9);border:2px solid #e6edf5bd;border-radius:14px;color:#fff;box-shadow:inset 0 1px 5px #fff7,0 3px 0 #17222bcc;justify-content:flex-end;padding:7px 2px;transform:none}
+.drive-pad [data-control=accelerate]{height:72px}
+.drive-pad [data-control=brake]{height:52px}
 .drive-pad [data-control=accelerate] svg,.drive-pad [data-control=brake] svg{display:none}
-.drive-pad [data-control=accelerate] span,.drive-pad [data-control=brake] span{font-size:8px;letter-spacing:.06em;padding:2px 5px;border-radius:4px;background:#182631d9}
-.drive-pad [data-control=accelerate].pressed,.drive-pad [data-control=brake].pressed{transform:translateY(4px) scale(.92);filter:brightness(1.25)}
-.drive-pad [data-control=boost],.drive-pad [data-control=drift]{height:40px;flex-direction:row;font-size:8px;letter-spacing:0;gap:2px}.drive-pad [data-control=boost] svg,.drive-pad [data-control=drift] svg{width:15px;height:15px}
+.drive-pad [data-control=accelerate] span,.drive-pad [data-control=brake] span{font-size:9px;letter-spacing:.06em;padding:2px 5px;border-radius:4px;background:#182631ed}
+.drive-pad [data-control=accelerate].pressed,.drive-pad [data-control=brake].pressed{transform:scale(.92);filter:brightness(1.25)}
+.drive-pad [data-control=drift]{height:48px;font-size:8px;letter-spacing:0}
+.drive-pad [data-control=boost]{height:64px;width:64px;border-radius:50%;border:3px solid transparent;padding:11px;background:linear-gradient(#452719,#241d20) padding-box,conic-gradient(#ffc261 var(--charge,234deg),#625048 0) border-box;box-shadow:0 3px 12px #0007;color:#ffca77}
+.drive-pad [data-control=boost] svg{width:32px;height:32px;fill:currentColor;stroke-width:1}
+.drive-pad [data-control=boost].boost-active{color:#fff4d1;box-shadow:0 0 20px #ff9828aa;background:linear-gradient(#aa531c,#67300d) padding-box,conic-gradient(#ffe1a4 var(--charge),#625048 0) border-box}
+.drive-pad [data-control=boost].recharging{color:#b5aaa1;filter:saturate(.25)}
 #weather-status{font-size:8px;color:#b0e4f5;letter-spacing:.09em}
 @media(max-width:350px){.mobile-controls{left:8px;right:8px;gap:6px}.steer-pad{width:134px}.steer-pad button{width:66px}}
-@media(max-height:500px){.drive-pad{grid-template-rows:40px 82px}.drive-pad [data-control=accelerate]{height:82px}.steer-pad{height:88px}.steer-pad button{height:88px}.steer-pad .wheel-art{width:88px;height:88px}}
+@media(max-height:500px){.drive-pad{grid-template-rows:64px 64px}.drive-pad [data-control=accelerate]{height:64px}.steer-pad{height:88px}.steer-pad button{height:88px}.steer-pad .wheel-art{width:88px;height:88px}}
 
 .race-intro{position:absolute;inset:25% 0 auto;display:flex;flex-direction:column;align-items:center;gap:22px;pointer-events:none;text-shadow:0 3px 18px #000}.race-intro[hidden]{display:none}.race-intro strong{font-size:clamp(24px,5vw,48px);letter-spacing:.08em;color:#fff;text-align:center}.race-intro button{pointer-events:auto;padding:11px 22px;border:1px solid #fff8;border-radius:24px;background:#172733c9;color:white;font-weight:700}.in-intro .mobile-controls,.in-intro .speed-card,.in-intro .boost-card{visibility:hidden}

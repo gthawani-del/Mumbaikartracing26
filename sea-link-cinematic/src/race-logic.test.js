@@ -97,3 +97,43 @@ test('a fast step crossing a rival still registers contact', () => {
   assert.ok(result.collision);
   assert.ok(result.events.some(e => e.type === 'rival'));
 });
+
+test('boost alone accelerates, depleted boost cannot pulse, release rearms it', () => {
+  const race = createRace({ length: 100000, rivals: 0 });
+  stepRace(race, { boost: true }, 1 / 60);
+  assert.ok(race.player.speed > 0);
+  assert.ok(race.player.boosting);
+  for (let i = 0; i < 600; i++) stepRace(race, { boost: true }, 1 / 60);
+  assert.equal(race.player.boosting, false);
+  assert.equal(race.player.boostExhausted, true);
+  assert.ok(race.player.speed <= 180 / 3.6);
+  for (let i = 0; i < 60; i++) {
+    stepRace(race, { boost: true }, 1 / 60);
+    assert.equal(race.player.boosting, false);
+  }
+  stepRace(race, {}, 1 / 60);
+  stepRace(race, { boost: true }, 1 / 60);
+  assert.equal(race.player.boosting, true);
+});
+
+test('brake overrides both throttle and boost without consuming charge', () => {
+  const race = createRace({ length: 10000, rivals: 0 });
+  race.player.speed = 250 / 3.6;
+  const charge = race.player.charge;
+  stepRace(race, { accelerate: true, boost: true, brake: true }, 1 / 60);
+  assert.ok(race.player.speed < 250 / 3.6);
+  assert.ok(race.player.charge >= charge);
+  assert.equal(race.player.boosting, false);
+});
+
+test('boost speed stays capped across frame rates and repeated activations', () => {
+  for (const dt of [1 / 120, 1 / 60, 1 / 30, 0.05]) {
+    const race = createRace({ length: 100000, rivals: 0 });
+    race.player.speed = 180 / 3.6;
+    for (let i = 0; i < 1000; i++) {
+      stepRace(race, { accelerate: true, boost: i % 150 < 100 }, dt);
+      assert.ok(race.player.speed <= 250 / 3.6);
+      assert.ok(race.player.charge >= 0 && race.player.charge <= 1);
+    }
+  }
+});
