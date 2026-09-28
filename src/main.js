@@ -565,6 +565,7 @@ async function load() {
     $("start").textContent = "Start your engines →";
     $("loading").textContent = "Circuit ready · Keyboard + touch";
     placeKarts();
+    if (new URLSearchParams(location.search).has("race")) start();
   } catch (e) {
     console.error(e);
     $("loading").textContent =
@@ -662,13 +663,7 @@ $("start").onclick = start;
 $("restart").onclick = start;
 $("resume").onclick = pause;
 $("pause").onclick = pause;
-$("home").onclick = () => {
-  mode = "menu";
-  clearInput();
-  showRace(false);
-  $("overlay").hidden = true;
-  $("countdown").textContent = "";
-};
+$("home").onclick = () => { location.href = "/"; };
 const keymap = {
   ArrowLeft: "left",
   KeyA: "left",
