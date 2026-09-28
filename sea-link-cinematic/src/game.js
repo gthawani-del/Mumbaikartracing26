@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { createSkyTexture, createWetSurfaceMaps } from './environment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createRace, advanceRace, racePosition, clamp } from './race-logic.js';
+import { createRace, racePosition, clamp } from './race-logic.js';
+
+import { createSimulation, advanceSimulation } from './simulation.js';
 
 const $ = (selector) => document.querySelector(selector);
 const SCALE = 0.28;
@@ -11,6 +13,7 @@ const held = new Set();
 const keys = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'accelerate', KeyW: 'accelerate', Space: 'accelerate', ArrowDown: 'brake', KeyS: 'brake', ShiftLeft: 'drift', ShiftRight: 'drift', KeyE: 'boost' };
 let renderer, scene, camera, cameraTarget, race, curve, routeLength, routeMeters, kart, rivals = [], weather, reflections, minimap, raf = 0, lastFrame = 0, lastUi = 0, shake = 0, eventTimeout, onExitCallback, uiBound = false;
 let disposed = false, paused = false;
+let simulation, cameraAnchor;
 
 const mat = (color, roughness = 0.75, metalness = 0) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
 const materials = {
@@ -196,7 +199,7 @@ function makeRoadReflections() {
 function updateReflections() {
   const transform = scene.userData.shadowTransform;
   for (let i = 0; i <= race.rivals.length; i++) {
-    const racer = i ? race.rivals[i - 1] : race.player;
+    const racer = i ? simulation.frame.rivals[i - 1] : simulation.frame.player;
     const frame = roadFrame(routeLength * racer.distance / race.length);
     transform.position.copy(frame.point).addScaledVector(frame.right, racer.lane * SCALE);
     transform.position.y = 0.175; transform.rotation.y = frame.yaw; transform.updateMatrix();
@@ -205,7 +208,7 @@ function updateReflections() {
   scene.userData.contactShadows.instanceMatrix.needsUpdate = true;
   reflections.forEach((mesh) => {
     const i = mesh.userData.racerIndex;
-    const racer = i ? race.rivals[i - 1] : race.player;
+    const racer = i ? simulation.frame.rivals[i - 1] : simulation.frame.player;
     const frame = roadFrame(routeLength * racer.distance / race.length);
     mesh.position.copy(frame.point).addScaledVector(frame.right, racer.lane * SCALE + mesh.userData.side * 0.22).addScaledVector(frame.tangent, -0.75);
     mesh.position.y = 0.204;
@@ -224,7 +227,7 @@ function updateWeather(dt) {
     buffer[offset + 3] = drop.x + 0.09; buffer[offset + 4] = drop.y + 0.34; buffer[offset + 5] = drop.z;
   });
   weather.rainGeo.attributes.position.needsUpdate = true;
-  const frame = roadFrame(routeLength * race.player.distance / race.length);
+  const frame = roadFrame(routeLength * simulation.frame.player.distance / race.length);
   if (race.player.speed > 10) for (const side of [-1, 1]) {
     const particle = weather.particles[weather.cursor] ?? {};
     particle.position = kart.position.clone().addScaledVector(frame.right, side * 0.36).addScaledVector(frame.tangent, -0.33);
@@ -284,6 +287,7 @@ function addWorld(data, pylonTemplate, asphalt, concrete, timeOfDay) {
   const [lon0, lat0] = data.route[0]; const cos = Math.cos(lat0 * Math.PI / 180);
   const pts = data.route.map(([lon, lat]) => new THREE.Vector3((lon - lon0) * 111320 * cos * SCALE, 0, (lat0 - lat) * 111320 * SCALE));
   curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.25);
+  curve.arcLengthDivisions = 4096; curve.updateArcLengths();
   const samples = curve.getSpacedPoints(600);
   routeLength = curve.getLength();
   const roadSamples = [samples[0].clone().addScaledVector(curve.getTangentAt(0), -8), ...samples, samples.at(-1).clone().addScaledVector(curve.getTangentAt(1), 8)];
@@ -445,15 +449,15 @@ function controls() {
   return input;
 }
 
-function updateKart(object, distance, lane, dt, speed, playerKart = false) {
+function updateKart(object, distance, lane, dt, playerKart = false) {
   const frame = roadFrame(routeLength * distance / race.length); const target = frame.point.clone().addScaledVector(frame.right, lane * SCALE);
   object.position.set(target.x, 0.16, target.z); object.rotation.y = frame.yaw;
   for (const wheel of object.userData.wheels) {
     const radius = wheel.name.includes('Rear') ? 0.35 : 0.30;
-    wheel.rotation.x -= speed * SCALE * dt / (radius * object.scale.x);
+    wheel.rotation.x = -distance * SCALE / (radius * object.scale.x);
   }
   if (playerKart) {
-    object.rotation.z = THREE.MathUtils.damp(object.rotation.z, -race.player.lateralSpeed * 0.018, 7, dt);
+    object.rotation.z = THREE.MathUtils.damp(object.rotation.z, -simulation.frame.player.lateralSpeed * 0.018, 7, dt);
   }
 }
 
@@ -473,21 +477,29 @@ function renderHud(now) {
 }
 function stepPosition() { return racePosition(race); }
 
-function tick(now) {
-  if (disposed || paused) return;
-  raf = requestAnimationFrame(tick);
-  const dt = lastFrame ? Math.min((now - lastFrame) / 1000, 0.25) : 1 / 60; lastFrame = now;
-  const result = advanceRace(race, controls(), dt);
-  updateKart(kart, race.player.distance, race.player.lane, dt, race.player.speed, true);
-  race.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt, rival.speed));
-  updateReflections(); updateWeather(dt);
-  const frame = roadFrame(routeLength * race.player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.2).addScaledVector(frame.right, race.player.lane * SCALE * 0.35); look.y += 0.9;
+function updateCamera(player, dt) {
+  const frame = roadFrame(routeLength * player.distance / race.length); const look = frame.point.clone().addScaledVector(frame.tangent, 5.2).addScaledVector(frame.right, player.lane * SCALE * 0.35); look.y += 0.9;
+  const translation = frame.point.clone().sub(cameraAnchor);
+  camera.position.add(translation); cameraTarget.add(translation); cameraAnchor.copy(frame.point);
   const tallPhone = camera.aspect < 0.52;
   const desired = frame.point.clone().addScaledVector(frame.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0));
-  desired.addScaledVector(frame.right, race.player.lane * SCALE * 0.65);
+  desired.addScaledVector(frame.right, player.lane * SCALE * 0.65);
   if (shake > 0) { desired.x += (Math.random() - 0.5) * shake; desired.y += (Math.random() - 0.5) * shake * 0.6; shake = Math.max(0, shake - dt * 2.4); }
   const alpha = 1 - Math.exp(-5.5 * dt); camera.position.lerp(desired, alpha); cameraTarget.lerp(look, alpha); camera.lookAt(cameraTarget);
   scene.userData.kartFill.position.copy(camera.position).add(new THREE.Vector3(0, 2, 0));
+}
+
+function tick(now) {
+  if (disposed || paused) return;
+  raf = requestAnimationFrame(tick);
+  const dt = lastFrame ? Math.max(0, Math.min((now - lastFrame) / 1000, 0.25)) : 0; lastFrame = now;
+  const result = advanceSimulation(simulation, race, controls(), dt);
+  const player = result.frame.player;
+  updateKart(kart, player.distance, player.lane, dt, true);
+  result.frame.rivals.forEach((rival, i) => updateKart(rivals[i], rival.distance, rival.lane, dt));
+  updateReflections(); updateWeather(dt);
+  // Late camera phase follows the exact same interpolated state as the models.
+  updateCamera(player, dt);
   renderer.render(scene, camera); renderHud(now);
   if (result.collision) shake = Math.max(shake, 0.25 + race.player.speed * 0.006);
   for (const event of result.events) {
@@ -516,6 +528,7 @@ function bindUi() {
   if (uiBound) return; uiBound = true;
   window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp); window.addEventListener('blur', () => held.clear());
   window.addEventListener('resize', resize);
+  document.addEventListener('visibilitychange', () => { if (document.hidden && race && !disposed && !paused) pause(true); });
   document.querySelectorAll('[data-control]').forEach((button) => {
     const start = (event) => { event.preventDefault(); held.add(button.dataset.control); button.classList.add('pressed'); button.setPointerCapture?.(event.pointerId); };
     const end = (event) => { event.preventDefault(); held.delete(button.dataset.control); button.classList.remove('pressed'); };
@@ -554,9 +567,6 @@ async function start(config) {
   ]);
   if (disposed) return;
   scene = new THREE.Scene();
-  const [lon0, lat0] = route.route[0]; const cos = Math.cos(lat0 * Math.PI / 180);
-  const raw = route.route.map(([lon, lat]) => new THREE.Vector3((lon - lon0) * 111320 * cos * SCALE, 0, (lat0 - lat) * 111320 * SCALE));
-  curve = new THREE.CatmullRomCurve3(raw, false, 'centripetal', 0.25); routeLength = curve.getLength();
   routeMeters = route.route.slice(1).reduce((total, [lon, lat], index) => {
     const [prevLon, prevLat] = route.route[index]; const dx = (lon - prevLon) * 111320 * Math.cos(((lat + prevLat) * 0.5) * Math.PI / 180); const dz = (lat - prevLat) * 111320;
     return total + Math.hypot(dx, dz);
@@ -570,6 +580,7 @@ async function start(config) {
   const colors = ['#4388bd', '#d99b34', '#55a16e', '#9c67c6', '#dc6853', '#48a0a0', '#d26b9b'];
   rivals = Array.from({ length: config.rivals }, (_, index) => { const object = kartTemplate ? modelKart(kartTemplate, colors[index % colors.length]) : makeKart(colors[index % colors.length]); object.scale.setScalar(KART_SCALE * 0.9); scene.add(object); return object; });
   race = createRace({ length: routeMeters, rivals: config.rivals, difficulty: config.difficulty, events: config.events });
+  simulation = createSimulation(race);
   minimap = makeMinimap(); reflections = makeRoadReflections();
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6)); renderer.setSize(window.innerWidth, window.innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
@@ -581,7 +592,7 @@ async function start(config) {
   $('#game-canvas').replaceChildren(renderer.domElement);
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2600);
   weather = makeWeather();
-  const start = roadFrame(0); const tallPhone = camera.aspect < 0.52;
+  const start = roadFrame(0); cameraAnchor = start.point.clone(); const tallPhone = camera.aspect < 0.52;
   camera.position.copy(start.point).addScaledVector(start.tangent, tallPhone ? -3 : -2.55).add(new THREE.Vector3(0, tallPhone ? 1.75 : 1.65, 0)); cameraTarget = start.point.clone().addScaledVector(start.tangent, 5.2).add(new THREE.Vector3(0, 0.9, 0)); camera.lookAt(cameraTarget);
   bindUi(); $('#hud-field').textContent = `/ ${config.rivals + 1}`; $('#game-view').hidden = false; $('#hud-speed').textContent = '0';
   raf = requestAnimationFrame(tick);
